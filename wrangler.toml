@@ -1,0 +1,20 @@
+name = "0xrss"
+compatibility_date = "2024-12-01"
+compatibility_flags = ["nodejs_compat"]
+
+# D1 Database
+[[d1_databases]]
+binding = "DB"
+database_name = "0xrss-db"
+database_id = "placeholder_update_after_create"
+
+# Cron Triggers for automatic feed refreshing
+[triggers]
+crons = ["*/30 * * * *"]
+
+# Pages configuration
+[site]
+bucket = ".vercel/output/static"
+
+[build]
+command = "npx @cloudflare/next-on-pages"

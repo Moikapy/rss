@@ -1,0 +1,35 @@
+import { NextRequest, NextResponse } from "next/server";
+import { getDb } from "@/lib/db/client";
+import { tags } from "@/lib/db/schema";
+
+export const runtime = "nodejs";
+
+// GET /api/tags
+export async function GET() {
+  const db = getDb();
+  const allTags = db.select().from(tags).all();
+  return NextResponse.json(allTags);
+}
+
+// POST /api/tags
+export async function POST(request: NextRequest) {
+  const body = (await request.json()) as Record<string, any>;
+  const { name } = body;
+
+  if (!name) {
+    return NextResponse.json({ error: "Tag name is required" }, { status: 400 });
+  }
+
+  const db = getDb();
+  const id = crypto.randomUUID();
+
+  try {
+    db.insert(tags).values({ id, name }).run();
+    return NextResponse.json({ id, success: true }, { status: 201 });
+  } catch (err: any) {
+    if (err.message?.includes("UNIQUE")) {
+      return NextResponse.json({ error: "Tag already exists" }, { status: 409 });
+    }
+    return NextResponse.json({ error: "Failed to create tag" }, { status: 500 });
+  }
+}

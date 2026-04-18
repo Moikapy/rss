@@ -1,0 +1,36 @@
+appId: com.0xrss.desktop
+productName: 0xRSS
+directories:
+  buildResources: build
+  output: dist-electron
+files:
+  - src/electron/**/*
+  - out/**/*
+  - public/**/*
+  - package.json
+extraMetadata:
+  main: src/electron/main.js
+mac:
+  category: public.app-category.news
+  icon: build/icon.icns
+  target:
+    - target: dmg
+      arch:
+        - universal
+    - target: zip
+      arch:
+        - universal
+linux:
+  category: News
+  icon: build/icon.png
+  target:
+    - target: AppImage
+      arch:
+        - x64
+        - arm64
+    - target: pacman
+      arch:
+        - x64
+        - arm64
+  maintainer: 0xRSS
+npmRebuild: false
