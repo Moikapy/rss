@@ -58,3 +58,5 @@ next-env.d.ts
 
 # Codebase wiki — compiled artifact, regenerated from source
 .codebase-wiki/
+!.env.production
+!.env.development
