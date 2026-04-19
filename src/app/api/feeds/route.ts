@@ -1,15 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getDb } from "@/lib/db/client";
+import { getDatabase } from "@/lib/db/get-db";
 import { feeds } from "@/lib/db/schema";
 import { feedTags } from "@/lib/db/schema";
 import { desc } from "drizzle-orm";
 
-export const runtime = "nodejs";
-
 // GET /api/feeds — list all feeds
 export async function GET() {
-  const db = getDb();
-  const allFeeds = db.select().from(feeds).orderBy(desc(feeds.createdAt)).all();
+  const db = await getDatabase();
+  const allFeeds = await db.select().from(feeds).orderBy(desc(feeds.createdAt)).all();
   return NextResponse.json(allFeeds);
 }
 
@@ -22,12 +20,12 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Feed URL is required" }, { status: 400 });
   }
 
-  const db = getDb();
+  const db = await getDatabase();
   const id = crypto.randomUUID();
   const now = new Date();
 
   try {
-    db.insert(feeds).values({
+    await db.insert(feeds).values({
       id,
       title: title || url,
       url,
@@ -44,7 +42,7 @@ export async function POST(request: NextRequest) {
     // Assign tags if provided
     if (tagIds && Array.isArray(tagIds)) {
       for (const tagId of tagIds) {
-        db.insert(feedTags).values({ feedId: id, tagId }).run();
+        await db.insert(feedTags).values({ feedId: id, tagId }).run();
       }
     }
 

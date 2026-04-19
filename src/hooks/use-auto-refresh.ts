@@ -1,4 +1,5 @@
 "use client";
+import { apiFetch, adminUrl } from "@/lib/api/client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
@@ -22,8 +23,7 @@ export function useAutoRefresh(intervalMs: number = 5 * 60 * 1000) {
   const refreshAll = useCallback(async () => {
     setState((prev) => ({ ...prev, refreshing: true }));
     try {
-      const res = await fetch("/api/cron/fetch-feeds", { method: "POST" });
-      const data = (await res.json()) as { feedsProcessed?: number; totalNewArticles?: number };
+      const data = await apiFetch<{ feedsProcessed?: number; totalNewArticles?: number }>(adminUrl("/fetch-feeds"), { method: "POST" });
       if (mountedRef.current) {
         setState({
           refreshing: false,

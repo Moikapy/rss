@@ -1,15 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getDb } from "@/lib/db/client";
+import { getDatabase } from "@/lib/db/get-db";
 import { feeds, folders, feedTags } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 
-export const runtime = "nodejs";
-
-// GET /api/opml — export feeds as OPML
 export async function GET() {
-  const db = getDb();
-  const allFolders = db.select().from(folders).all();
-  const allFeeds = db.select().from(feeds).all();
+  const db = await getDatabase();
+  const allFolders = await db.select().from(folders).all();
+  const allFeeds = await db.select().from(feeds).all();
 
   let xml = `<?xml version="1.0" encoding="UTF-8"?>\n`;
   xml += `<opml version="2.0">\n`;
@@ -19,7 +16,7 @@ export async function GET() {
   xml += `  </head>\n`;
   xml += `  <body>\n`;
 
-  const folderMap = new Map(allFolders.map((f) => [f.id, f]));
+  const folderMap = new Map(allFolders.map((f: typeof allFolders[number]) => [f.id, f]));
   const folderFeeds = new Map<string, typeof allFeeds>();
   const uncategorized: typeof allFeeds = [];
 
@@ -70,7 +67,7 @@ export async function POST(request: NextRequest) {
   }
 
   const text = await file.text();
-  const db = getDb();
+  const db = await getDatabase();
 
   const outlineRegex = /<outline[^>]*>/gi;
   let currentFolderId: string | null = null;
@@ -92,7 +89,7 @@ export async function POST(request: NextRequest) {
       const siteUrlMatch = trimmed.match(/htmlUrl="([^"]*)"/i);
       const siteUrl = siteUrlMatch ? siteUrlMatch[1] : null;
 
-      const existing = db.select({ id: feeds.id }).from(feeds).where(eq(feeds.url, url)).get();
+      const existing = await db.select({ id: feeds.id }).from(feeds).where(eq(feeds.url, url)).get();
       if (existing) {
         skipped++;
         continue;
@@ -101,7 +98,7 @@ export async function POST(request: NextRequest) {
       const id = crypto.randomUUID();
       const now = new Date();
 
-      db.insert(feeds).values({
+      await db.insert(feeds).values({
         id,
         title,
         url,
@@ -120,11 +117,11 @@ export async function POST(request: NextRequest) {
       const textMatch = trimmed.match(/text="([^"]*)"/i);
       if (textMatch && !trimmed.endsWith("/>")) {
         const folderName = textMatch[1];
-        let folder = db.select({ id: folders.id }).from(folders).where(eq(folders.name, folderName)).get();
+        let folder = await db.select({ id: folders.id }).from(folders).where(eq(folders.name, folderName)).get();
 
         if (!folder) {
           const folderId = crypto.randomUUID();
-          db.insert(folders).values({
+          await db.insert(folders).values({
             id: folderId,
             name: folderName,
             order: 0,

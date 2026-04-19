@@ -1,7 +1,7 @@
 "use client";
 import { apiFetch, adminUrl, publicFetch } from "@/lib/api/client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -69,6 +69,22 @@ export function FeedEditDialog({
   const [refreshInterval, setRefreshInterval] = useState(30);
   const [autoRefresh, setAutoRefresh] = useState(true);
 
+  // Refs to track latest form values — guards against stale closures
+  // if Base UI Dialog/Button intercept events in a way that delays
+  // React's state propagation to the onClick handler.
+  const titleRef = useRef("");
+  const folderIdRef = useRef("");
+  const refreshIntervalRef = useRef(30);
+  const autoRefreshRef = useRef(true);
+  const selectedTagIdsRef = useRef(new Set<string>());
+
+  // Keep refs in sync with state
+  useEffect(() => { titleRef.current = title; }, [title]);
+  useEffect(() => { folderIdRef.current = folderId; }, [folderId]);
+  useEffect(() => { refreshIntervalRef.current = refreshInterval; }, [refreshInterval]);
+  useEffect(() => { autoRefreshRef.current = autoRefresh; }, [autoRefresh]);
+  useEffect(() => { selectedTagIdsRef.current = selectedTagIds; }, [selectedTagIds]);
+
   useEffect(() => {
     if (!feedId || !open) return;
 
@@ -106,13 +122,15 @@ export function FeedEditDialog({
       const updated = await apiFetch<any>(adminUrl(`/feeds/${feedId}`), {
         method: "PATCH",
         body: JSON.stringify({
-          title,
-          folderId: folderId || null,
-          refreshInterval,
-          autoRefresh,
-          tagIds: Array.from(selectedTagIds),
+          title: titleRef.current,
+          folderId: folderIdRef.current || null,
+          refreshInterval: refreshIntervalRef.current,
+          autoRefresh: autoRefreshRef.current,
+          tagIds: Array.from(selectedTagIdsRef.current),
         }),
       });
+
+      console.log("[feed-edit] PATCH sent:", { title: titleRef.current, folderId: folderIdRef.current, refreshInterval: refreshIntervalRef.current, autoRefresh: autoRefreshRef.current });
 
       // Update local feed state with response
       if (updated) {

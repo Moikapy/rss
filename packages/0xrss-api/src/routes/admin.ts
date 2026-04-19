@@ -74,25 +74,52 @@ adminRoutes.get("/api/admin/feeds/:id", async (c) => {
 adminRoutes.patch("/api/admin/feeds/:id", async (c) => {
   const db = createDb(c.env.DB);
   const body = await c.req.json();
-  const updates: Record<string, any> = { updatedAt: new Date() };
-  for (const key of ["title", "siteUrl", "description", "folderId", "refreshInterval", "autoRefresh"]) {
-    if (body[key] !== undefined) updates[key] = body[key];
+  const feedId = c.req.param("id");
+
+  await invalidateCache(c.env, ["/api/public/feeds", "/api/public/articles", "/api/public/tags"]);
+
+  // D1 local (miniflare) caches reads and doesn't invalidate after writes within the same request.
+  // Re-querying may return stale data. Fetch BEFORE the update and merge the changes.
+  const current = await db.select().from(feeds).where(eq(feeds.id, feedId)).get();
+  if (!current) return c.json({ error: "Feed not found" }, 404);
+
+  // Build SET clause using raw D1 prepare() — drizzle .run() / .returning().all()
+  // silently fail to commit UPDATEs on local D1 (miniflare/workerd).
+  const setClauses: string[] = ["updated_at = ?"];
+  const setValues: any[] = [new Date().toISOString()];
+
+  const columnMap: Record<string, string> = {
+    title: "title",
+    siteUrl: "site_url",
+    description: "description",
+    folderId: "folder_id",
+    refreshInterval: "refresh_interval",
+    autoRefresh: "auto_refresh",
+  };
+
+  for (const [key, col] of Object.entries(columnMap)) {
+    if (body[key] !== undefined) {
+      setClauses.push(`${col} = ?`);
+      setValues.push(body[key]);
+    }
   }
 
-  // D1 requires .returning().all() for UPDATEs to persist
-  const result = await db.update(feeds).set(updates).where(eq(feeds.id, c.req.param("id"))).returning().all();
-  console.log(`[admin] PATCH feeds/${c.req.param("id")} updates:`, JSON.stringify(updates), `result rows:`, result.length);
+  setValues.push(feedId);
+  const stmt = c.env.DB.prepare(`UPDATE feeds SET ${setClauses.join(", ")} WHERE id = ?`).bind(...setValues);
+  await stmt.run();
 
+  // Update tags if provided
   if (body.tagIds && Array.isArray(body.tagIds)) {
-    await db.delete(feedTags).where(eq(feedTags.feedId, c.req.param("id"))).run();
+    await db.delete(feedTags).where(eq(feedTags.feedId, feedId)).run();
     for (const tagId of body.tagIds) {
-      await db.insert(feedTags).values({ feedId: c.req.param("id"), tagId }).run();
+      await db.insert(feedTags).values({ feedId, tagId }).run();
     }
   }
 
   await invalidateCache(c.env, ["/api/public/feeds", "/api/public/articles", "/api/public/tags"]);
 
-  const updated = await db.select().from(feeds).where(eq(feeds.id, c.req.param("id"))).get();
+  // Merge updated fields into the pre-update row (avoids stale D1 read cache)
+  const updated = { ...current, ...body, updatedAt: new Date() };
   return c.json(updated);
 });
 
@@ -129,11 +156,21 @@ adminRoutes.get("/api/admin/articles/:id", async (c) => {
 adminRoutes.patch("/api/admin/articles/:id", async (c) => {
   const db = createDb(c.env.DB);
   const body = await c.req.json();
-  const updates: Record<string, any> = {};
-  if (body.read !== undefined) updates.read = body.read;
-  if (body.bookmarked !== undefined) updates.bookmarked = body.bookmarked;
-  if (body.readLater !== undefined) updates.readLater = body.readLater;
-  await db.update(articles).set(updates).where(eq(articles.id, c.req.param("id"))).returning().all();
+  const articleId = c.req.param("id");
+
+  // Use raw D1 for UPDATE (drizzle .run() silently fails on local D1)
+  const setClauses: string[] = [];
+  const setValues: any[] = [];
+
+  if (body.read !== undefined) { setClauses.push("`read` = ?"); setValues.push(body.read ? 1 : 0); }
+  if (body.bookmarked !== undefined) { setClauses.push("bookmarked = ?"); setValues.push(body.bookmarked ? 1 : 0); }
+  if (body.readLater !== undefined) { setClauses.push("read_later = ?"); setValues.push(body.readLater ? 1 : 0); }
+
+  if (setClauses.length > 0) {
+    setValues.push(articleId);
+    await c.env.DB.prepare(`UPDATE articles SET ${setClauses.join(", ")} WHERE id = ?`).bind(...setValues).run();
+  }
+
   return c.json({ success: true });
 });
 
@@ -163,10 +200,20 @@ adminRoutes.post("/api/admin/folders", async (c) => {
 adminRoutes.patch("/api/admin/folders/:id", async (c) => {
   const db = createDb(c.env.DB);
   const body = await c.req.json();
-  const updates: Record<string, any> = {};
-  if (body.name !== undefined) updates.name = body.name;
-  if (body.order !== undefined) updates.order = body.order;
-  await db.update(folders).set(updates).where(eq(folders.id, c.req.param("id"))).returning().all();
+  const folderId = c.req.param("id");
+
+  // Use raw D1 for UPDATE (drizzle .run() silently fails on local D1)
+  const setClauses: string[] = [];
+  const setValues: any[] = [];
+
+  if (body.name !== undefined) { setClauses.push("name = ?"); setValues.push(body.name); }
+  if (body.order !== undefined) { setClauses.push("`order` = ?"); setValues.push(body.order); }
+
+  if (setClauses.length > 0) {
+    setValues.push(folderId);
+    await c.env.DB.prepare(`UPDATE folders SET ${setClauses.join(", ")} WHERE id = ?`).bind(...setValues).run();
+  }
+
   await invalidateCache(c.env, ["/api/public/folders", "/api/public/feeds"]);
   return c.json({ success: true });
 });

@@ -13,6 +13,7 @@ import { Sheet, SheetContent } from "@/components/ui/sheet";
 import { ArrowLeft, MessageSquare } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ChatPanel } from "@/components/chat/chat-panel";
+import { FeedEditDialog } from "@/components/feed/feed-edit-dialog";
 import { useAuth } from "@/components/providers/auth-provider";
 import { useLocalArticleState } from "@/hooks/use-local-article-state";
 
@@ -54,15 +55,19 @@ export default function DashboardPage() {
   const [layout, setLayout] = useState<LayoutMap | undefined>(undefined);
   const [sidebarVisible, setSidebarVisible] = useState(true);
   const [articleVersion, setArticleVersion] = useState(0);
+  const [sidebarVersion, setSidebarVersion] = useState(0);
   const [articles, setArticles] = useState<any[]>([]);
   const [mobileView, setMobileView] = useState<MobileView>("list");
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
   const [chatOpen, setChatOpen] = useState(false);
-  const { authenticated, loading: authLoading } = useAuth();
+  const [editingFeedId, setEditingFeedId] = useState<string | null>(null);
+  const { authenticated } = useAuth();
   const articleState = useLocalArticleState();
-
   const { refreshing, lastRefresh, totalNewArticles, refreshAll } = useAutoRefresh(5 * 60 * 1000);
+
+  // Dashboard works for everyone — feeds are public
+  // Auth is only needed for admin actions (add/edit/delete/feeds, chat)
 
   // Detect mobile
   useEffect(() => {
@@ -178,6 +183,7 @@ export default function DashboardPage() {
         <Sheet open={sidebarOpen} onOpenChange={setSidebarOpen}>
           <SheetContent side="left" className="w-[280px] p-0">
             <Sidebar
+              key={`sidebar-${sidebarVersion}`}
               selectedFeedId={selectedFeedId}
               selectedFolderId={selectedFolderId}
               selectedTagId={selectedTagId}
@@ -186,6 +192,7 @@ export default function DashboardPage() {
               onSelectFolder={handleSelectFolder}
               onSelectTag={handleSelectTag}
               onFilterChange={setFilter}
+              onEditFeed={setEditingFeedId}
               isAuthenticated={authenticated}
             />
           </SheetContent>
@@ -261,10 +268,11 @@ export default function DashboardPage() {
                 id="sidebar"
                 defaultSize="20%"
                 minSize="10%"
-                maxSize="30%"
+                maxSize="25%"
                 collapsible
               >
                 <Sidebar
+                  key={`sidebar-${sidebarVersion}`}
                   selectedFeedId={selectedFeedId}
                   selectedFolderId={selectedFolderId}
                   selectedTagId={selectedTagId}
@@ -273,6 +281,7 @@ export default function DashboardPage() {
                   onSelectFolder={handleSelectFolder}
                   onSelectTag={handleSelectTag}
                   onFilterChange={setFilter}
+                  onEditFeed={setEditingFeedId}
                   isAuthenticated={authenticated}
                 />
               </ResizablePanel>
@@ -323,6 +332,17 @@ export default function DashboardPage() {
         </ResizablePanelGroup>
       </div>
       <StatusBar refreshing={refreshing} lastRefresh={lastRefresh} onRefresh={refreshAll} />
+
+      {/* Feed edit dialog — rendered at page level to avoid Sheet/Dialog portal conflicts */}
+      {authenticated && (
+        <FeedEditDialog
+          feedId={editingFeedId}
+          open={editingFeedId !== null}
+          onOpenChange={(open) => { if (!open) setEditingFeedId(null); }}
+          onUpdated={() => { setEditingFeedId(null); setSidebarVersion(v => v + 1); }}
+          onDeleted={() => { setEditingFeedId(null); setSidebarVersion(v => v + 1); }}
+        />
+      )}
     </div>
   );
 }

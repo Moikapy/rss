@@ -1,7 +1,5 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { fetchAllFeeds } from "@/lib/feeds/fetcher";
-
-export const runtime = "nodejs";
 
 // POST /api/cron/fetch-feeds
 export async function POST() {

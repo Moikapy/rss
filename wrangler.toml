@@ -1,20 +1,33 @@
 name = "0xrss"
-compatibility_date = "2024-12-01"
+main = ".open-next/worker.js"
+compatibility_date = "2026-04-08"
 compatibility_flags = ["nodejs_compat"]
+workers_dev = true
+preview_urls = false
 
-# D1 Database
+# Use unbound Worker (billed per-request, higher CPU limits)
+[limits]
+purpose = "unbound"
+
+[assets]
+directory = ".open-next/assets"
+binding = "ASSETS"
+run_worker_first = true
+
 [[d1_databases]]
 binding = "DB"
 database_name = "0xrss-db"
-database_id = "placeholder_update_after_create"
+database_id = "3b86299e-f7e9-4141-91fe-ab1182d416a6"
+
+# Migrations directory for D1 (drizzle generates here)
+migrations_dir = "drizzle"
 
 # Cron Triggers for automatic feed refreshing
 [triggers]
 crons = ["*/30 * * * *"]
 
-# Pages configuration
-[site]
-bucket = ".vercel/output/static"
-
-[build]
-command = "npx @cloudflare/next-on-pages"
+# Observability
+[observability]
+[observability.logs]
+enabled = false
+invocation_logs = true

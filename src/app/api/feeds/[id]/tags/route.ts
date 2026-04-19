@@ -1,9 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getDb } from "@/lib/db/client";
-import { feeds, feedTags } from "@/lib/db/schema";
+import { getDatabase } from "@/lib/db/get-db";
+import { feedTags } from "@/lib/db/schema";
 import { eq, and } from "drizzle-orm";
-
-export const runtime = "nodejs";
 
 // GET /api/feeds/[id]/tags — get tags for a feed
 export async function GET(
@@ -11,8 +9,8 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
-  const db = getDb();
-  const tags = db.select({ tagId: feedTags.tagId })
+  const db = await getDatabase();
+  const tags = await db.select({ tagId: feedTags.tagId })
     .from(feedTags)
     .where(eq(feedTags.feedId, id))
     .all();
@@ -32,9 +30,9 @@ export async function POST(
     return NextResponse.json({ error: "Tag ID required" }, { status: 400 });
   }
 
-  const db = getDb();
+  const db = await getDatabase();
   try {
-    db.insert(feedTags).values({ feedId: id, tagId }).run();
+    await db.insert(feedTags).values({ feedId: id, tagId }).run();
     return NextResponse.json({ success: true }, { status: 201 });
   } catch {
     return NextResponse.json({ error: "Tag already assigned or not found" }, { status: 409 });
@@ -54,8 +52,8 @@ export async function DELETE(
     return NextResponse.json({ error: "Tag ID required" }, { status: 400 });
   }
 
-  const db = getDb();
-  db.delete(feedTags)
+  const db = await getDatabase();
+  await db.delete(feedTags)
     .where(and(eq(feedTags.feedId, id), eq(feedTags.tagId, tagId)))
     .run();
   return NextResponse.json({ success: true });

@@ -1,8 +1,9 @@
 import { Ollama } from "ollama";
+import { getEnvStringOptional } from "@/lib/env";
 
 export function getOllamaClient() {
   return new Ollama({
-    host: process.env.OLLAMA_HOST || "http://localhost:11434",
+    host: getEnvStringOptional("OLLAMA_HOST") || "http://localhost:11434",
   });
 }
 
@@ -31,7 +32,7 @@ export async function checkOllamaHealth(): Promise<{
 /** Embed a single text string for RAG indexing */
 export async function embedText(text: string): Promise<number[]> {
   const ollama = getOllamaClient();
-  const embedModel = process.env.OLLAMA_EMBED_MODEL || "embeddinggemma";
+  const embedModel = getEnvStringOptional("OLLAMA_EMBED_MODEL") || "embeddinggemma";
   const response = await ollama.embed({
     model: embedModel,
     input: text,
@@ -42,7 +43,7 @@ export async function embedText(text: string): Promise<number[]> {
 /** Embed a batch of texts for RAG indexing */
 export async function embedBatch(texts: string[]): Promise<number[][]> {
   const ollama = getOllamaClient();
-  const embedModel = process.env.OLLAMA_EMBED_MODEL || "embeddinggemma";
+  const embedModel = getEnvStringOptional("OLLAMA_EMBED_MODEL") || "embeddinggemma";
   const response = await ollama.embed({
     model: embedModel,
     input: texts,

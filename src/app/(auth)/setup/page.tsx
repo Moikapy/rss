@@ -1,4 +1,7 @@
 "use client";
+import { apiUrl } from "@/lib/api/client";
+
+const TOKEN_KEY = "0xrss-token";
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
@@ -32,17 +35,23 @@ export default function SetupPage() {
     setLoading(true);
 
     try {
-      const res = await fetch("/api/auth/setup", {
+      const res = await fetch(apiUrl("/api/auth/setup"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        credentials: "include",
         body: JSON.stringify({ username, password }),
       });
 
-      const data = (await res.json()) as { success?: boolean; error?: string };
+      const data = (await res.json()) as { success?: boolean; token?: string; error?: string };
 
       if (!res.ok) {
         setError(data.error || "Setup failed");
         return;
+      }
+
+      // Store JWT token for cross-origin API calls
+      if (data.token) {
+        localStorage.setItem(TOKEN_KEY, data.token);
       }
 
       router.push("/");

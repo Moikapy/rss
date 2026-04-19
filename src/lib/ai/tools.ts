@@ -1,4 +1,4 @@
-import { getDb } from "@/lib/db/client";
+import { getDatabase } from "@/lib/db/get-db";
 import { articles, feeds, folders, tags, feedTags } from "@/lib/db/schema";
 import { eq, desc, sql, and, like } from "drizzle-orm";
 import { search as ddgSearch, searchNews as ddgSearchNews } from "duck-duck-scrape";
@@ -128,24 +128,24 @@ export const RSS_TOOLS = [
 export async function executeTool(name: string, args: Record<string, unknown>): Promise<string> {
   switch (name) {
     case "read_article":
-      return toolReadArticle(args.article_id as string);
+      return await toolReadArticle(args.article_id as string);
     case "search_articles":
-      return toolSearchArticles(
+      return await toolSearchArticles(
         args.query as string,
         (args.limit as number) || 5
       );
     case "list_feeds":
-      return toolListFeeds();
+      return await toolListFeeds();
     case "list_recent_articles":
-      return toolListRecentArticles({
+      return await toolListRecentArticles({
         feedId: args.feed_id as string | undefined,
         limit: (args.limit as number) || 10,
         unreadOnly: args.unread_only as boolean | undefined,
       });
     case "get_unread_counts":
-      return toolGetUnreadCounts();
+      return await toolGetUnreadCounts();
     case "web_search":
-      return toolWebSearch(
+      return await toolWebSearch(
         args.query as string,
         (args.limit as number) || 5,
         args.search_news as boolean | undefined
@@ -157,9 +157,9 @@ export async function executeTool(name: string, args: Record<string, unknown>): 
 
 // ─── Individual Tool Handlers ───────────────────────────────────────────────
 
-function toolReadArticle(articleId: string): string {
-  const db = getDb();
-  const row = db
+async function toolReadArticle(articleId: string): Promise<string> {
+  const db = await getDatabase();
+  const row = await db
     .select({
       id: articles.id,
       title: articles.title,
@@ -182,7 +182,7 @@ function toolReadArticle(articleId: string): string {
   }
 
   // Get feed name
-  const feed = db
+  const feed = await db
     .select({ title: feeds.title })
     .from(feeds)
     .where(eq(feeds.id, row.feedId))
@@ -214,12 +214,12 @@ function toolReadArticle(articleId: string): string {
   });
 }
 
-function toolSearchArticles(query: string, limit: number): string {
-  const db = getDb();
+async function toolSearchArticles(query: string, limit: number): Promise<string> {
+  const db = await getDatabase();
   const searchTerm = `%${query}%`;
   const cappedLimit = Math.min(limit, 20);
 
-  const rows = db
+  const rows = await db
     .select({
       id: articles.id,
       title: articles.title,
@@ -237,13 +237,14 @@ function toolSearchArticles(query: string, limit: number): string {
     .limit(cappedLimit)
     .all();
 
-  const rowsWithFeed = rows.map((row: any) => {
-    const feed = db
+  const rowsWithFeed = [];
+  for (const row of rows as any[]) {
+    const feed = await db
       .select({ title: feeds.title })
       .from(feeds)
       .where(eq(feeds.id, row.feedId))
       .get();
-    return {
+    rowsWithFeed.push({
       id: row.id,
       title: row.title,
       url: row.url,
@@ -251,18 +252,18 @@ function toolSearchArticles(query: string, limit: number): string {
       publishedAt: row.publishedAt.toISOString(),
       read: row.read,
       feed: feed?.title || "Unknown",
-    };
-  });
+    });
+  }
 
   return JSON.stringify({ results: rowsWithFeed, count: rowsWithFeed.length });
 }
 
-function toolListFeeds(): string {
-  const db = getDb();
-  const feedRows = db.select().from(feeds).all();
+async function toolListFeeds(): Promise<string> {
+  const db = await getDatabase();
+  const feedRows = await db.select().from(feeds).all();
 
   // Get unread counts
-  const unreadRows = db
+  const unreadRows = await db
     .select({
       feedId: articles.feedId,
       count: sql<number>`count(*)`,
@@ -281,7 +282,7 @@ function toolListFeeds(): string {
   const folderMap = new Map<string, string>();
   for (const f of feedRows as any[]) {
     if (f.folderId) {
-      const folder = db
+      const folder = await db
         .select({ name: folders.name })
         .from(folders)
         .where(eq(folders.id, f.folderId))
@@ -301,12 +302,12 @@ function toolListFeeds(): string {
   return JSON.stringify({ feeds: result, total: result.length });
 }
 
-function toolListRecentArticles(opts: {
+async function toolListRecentArticles(opts: {
   feedId?: string;
   limit: number;
   unreadOnly?: boolean;
-}): string {
-  const db = getDb();
+}): Promise<string> {
+  const db = await getDatabase();
   const { feedId, limit, unreadOnly } = opts;
   const cappedLimit = Math.min(limit, 30);
 
@@ -314,7 +315,7 @@ function toolListRecentArticles(opts: {
   if (feedId) conditions.push(eq(articles.feedId, feedId));
   if (unreadOnly) conditions.push(eq(articles.read, false));
 
-  const rows = db
+  const rows = await db
     .select({
       id: articles.id,
       title: articles.title,
@@ -331,13 +332,14 @@ function toolListRecentArticles(opts: {
     .limit(cappedLimit)
     .all();
 
-  const rowsWithFeed = rows.map((row: any) => {
-    const feed = db
+  const rowsWithFeed = [];
+  for (const row of rows as any[]) {
+    const feed = await db
       .select({ title: feeds.title })
       .from(feeds)
       .where(eq(feeds.id, row.feedId))
       .get();
-    return {
+    rowsWithFeed.push({
       id: row.id,
       title: row.title,
       url: row.url,
@@ -346,15 +348,15 @@ function toolListRecentArticles(opts: {
       read: row.read,
       bookmarked: row.bookmarked,
       feed: feed?.title || "Unknown",
-    };
-  });
+    });
+  }
 
   return JSON.stringify({ articles: rowsWithFeed, count: rowsWithFeed.length });
 }
 
-function toolGetUnreadCounts(): string {
-  const db = getDb();
-  const rows = db
+async function toolGetUnreadCounts(): Promise<string> {
+  const db = await getDatabase();
+  const rows = await db
     .select({
       feedId: articles.feedId,
       count: sql<number>`count(*)`,
@@ -365,23 +367,25 @@ function toolGetUnreadCounts(): string {
     .all();
 
   // Total
-  const total = db
+  const total = await db
     .select({ count: sql<number>`count(*)` })
     .from(articles)
     .where(eq(articles.read, false))
     .get();
 
-  const feedUnreads = (rows as any[]).map((r) => {
-    const feed = db
+  const feedUnreads = [];
+  for (const r of rows as any[]) {
+    const feed = await db
       .select({ title: feeds.title })
       .from(feeds)
       .where(eq(feeds.id, r.feedId))
       .get();
-    return { feedId: r.feedId, feed: feed?.title || "Unknown", unread: r.count };
-  });
+    feedUnreads.push({ feedId: r.feedId, feed: feed?.title || "Unknown", unread: r.count });
+  }
 
   return JSON.stringify({ total: (total as any)?.count || 0, feeds: feedUnreads });
 }
+
 // ─── Web Search via DuckDuckGo ──────────────────────────────────────────────
 
 async function toolWebSearch(query: string, limit: number, searchNews?: boolean): Promise<string> {

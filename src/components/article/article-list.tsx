@@ -1,9 +1,12 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
+import { apiUrl, publicUrl, adminUrl, apiFetch } from "@/lib/api/client";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Bookmark, Clock, ExternalLink, Share2, Check } from "lucide-react";
 import { cn } from "@/lib/utils";
+
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || "";
 
 interface ArticleSummary {
   id: string;
@@ -64,8 +67,8 @@ export function ArticleList({
       if (searchQuery) params.set("q", searchQuery);
 
       const url = searchQuery
-        ? `/api/search?${params}`
-        : `/api/articles?${params}`;
+        ? apiUrl(`${publicUrl("/search")}?${params}`)
+        : `${API_BASE}${publicUrl("/articles")}?${params}`;
 
       const res = await fetch(url);
       const raw = (await res.json()) as any;

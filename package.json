@@ -17,15 +17,18 @@
     "electron:pack": "electron-builder --dir",
     "electron:dist:mac": "electron-builder --mac",
     "electron:dist:linux": "electron-builder --linux AppImage:pacman",
-    "cf:dev": "npx wrangler pages dev .vercel/output/static --compatibility-flag nodejs_compat",
-    "cf:build": "npx @cloudflare/next-on-pages",
-    "cf:deploy": "npx @cloudflare/next-on-pages && npx wrangler pages deploy .vercel/output/static",
-    "cf:d1:create": "npx wrangler d1 create 0xrss-db",
-    "cf:d1:migrate": "npx wrangler d1 migrations apply 0xrss-db"
+    "cf:dev": "wrangler dev",
+    "cf:build": "opennextjs-cloudflare build",
+    "cf:deploy": "NEXT_PUBLIC_API_URL=https://api.rss.moikapy.dev opennextjs-cloudflare build && wrangler deploy",
+    "cf:preview": "opennextjs-cloudflare build && wrangler dev",
+    "cf:d1:create": "wrangler d1 create 0xrss-db",
+    "cf:d1:migrate:local": "wrangler d1 migrations apply 0xrss-db --local",
+    "cf:d1:migrate:remote": "wrangler d1 migrations apply 0xrss-db --remote"
   },
   "dependencies": {
     "@base-ui/react": "^1.4.0",
     "@mozilla/readability": "^0.6.0",
+    "@opennextjs/cloudflare": "^1.19.1",
     "@tiptap/pm": "^3.22.3",
     "@tiptap/react": "^3.22.3",
     "@tiptap/starter-kit": "^3.22.3",
@@ -51,7 +54,6 @@
     "tw-animate-css": "^1.4.0"
   },
   "devDependencies": {
-    "@cloudflare/next-on-pages": "^1.13.16",
     "@cloudflare/workers-types": "^4.20260417.1",
     "@tailwindcss/postcss": "^4",
     "@types/better-sqlite3": "^7.6.13",
@@ -67,7 +69,8 @@
     "eslint-config-next": "16.2.4",
     "tailwindcss": "^4",
     "typescript": "^5",
-    "wait-on": "^9.0.5"
+    "wait-on": "^9.0.5",
+    "wrangler": "^4.83.0"
   },
   "ignoreScripts": [
     "sharp",

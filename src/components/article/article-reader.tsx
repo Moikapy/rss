@@ -1,4 +1,5 @@
 "use client";
+import { publicFetch, adminUrl } from "@/lib/api/client";
 
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
@@ -45,25 +46,16 @@ export function ArticleReader({ articleId, articleState, authenticated }: Articl
     }
 
     setLoading(true);
-    fetch(`/api/articles/${articleId}`)
-      .then((res) => res.json() as Promise<any>)
+    // Use public route for reading — no auth required
+    publicFetch<Article>(`/articles/${articleId}`)
       .then((data) => {
-        if (data?.error || !data?.id) {
+        if (!data?.id) {
           setArticle(null);
         } else {
-          setArticle(data as Article);
+          setArticle(data);
         }
-        // Auto-mark as read
-        if (!data.read) {
-          if (articleState) articleState.markRead(articleId);
-          if (authenticated) {
-            fetch(`/api/articles/${articleId}`, {
-              method: "PATCH",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ read: true }),
-            }).catch(() => {});
-          }
-        }
+        // Auto-mark as read locally
+        if (articleState) articleState.markRead(articleId);
       })
       .catch(() => setArticle(null))
       .finally(() => setLoading(false));
@@ -75,24 +67,13 @@ export function ArticleReader({ articleId, articleState, authenticated }: Articl
     const newValue = !article[field];
     setArticle((prev) => prev ? { ...prev, [field]: newValue } : prev);
 
-    // Update local state
+    // Update local state only — read/bookmark/readLater is tracked client-side
     if (articleState) {
       if (field === "bookmarked") articleState.toggleBookmark(article.id);
       else if (field === "readLater") articleState.toggleReadLater(article.id);
       else if (field === "read") {
         if (newValue) articleState.markRead(article.id);
       }
-    }
-
-    // Also persist to server when authenticated
-    if (authenticated) {
-      await fetch(`/api/articles/${article.id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ [field]: newValue }),
-      }).catch(() => {
-        setArticle((prev) => prev ? { ...prev, [field]: !newValue } : prev);
-      });
     }
   }
 

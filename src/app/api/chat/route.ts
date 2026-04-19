@@ -1,12 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getOllamaClient } from "@/lib/ai/ollama";
 import { searchArticles, buildContext } from "@/lib/ai/rag";
-import { getDb } from "@/lib/db/client";
+import { getDatabase } from "@/lib/db/get-db";
 import { articles, feeds } from "@/lib/db/schema";
 import { eq, desc, sql } from "drizzle-orm";
 import { RSS_TOOLS, executeTool } from "@/lib/ai/tools";
-
-export const runtime = "nodejs";
 
 const SYSTEM_PROMPT = `You are an AI assistant for 0xRSS, a personal RSS feed reader. You help users understand, summarize, and discuss articles from their RSS feeds.
 
@@ -48,8 +46,8 @@ export async function POST(request: NextRequest) {
   let articleContext = "";
   if (articleId) {
     try {
-      const db = getDb();
-      const row = db
+      const db = await getDatabase();
+      const row = await db
         .select({
           id: articles.id,
           title: articles.title,
@@ -65,7 +63,7 @@ export async function POST(request: NextRequest) {
         .get();
 
       if (row) {
-        const feed = db
+        const feed = await db
           .select({ title: feeds.title })
           .from(feeds)
           .where(eq(feeds.id, row.feedId))

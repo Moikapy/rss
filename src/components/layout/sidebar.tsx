@@ -1,4 +1,5 @@
 "use client";
+import { apiFetch, publicFetch, adminUrl } from "@/lib/api/client";
 
 import { useEffect, useState, useCallback } from "react";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -7,7 +8,6 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Folder, Tag, ChevronRight, ChevronDown, Plus, Rss, X, Settings, Copy, Check } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { FeedEditDialog } from "@/components/feed/feed-edit-dialog";
 
 interface FeedItem {
   id: string;
@@ -38,6 +38,7 @@ interface SidebarProps {
   onSelectFolder: (folderId: string) => void;
   onSelectTag: (tagId: string) => void;
   onFilterChange: (filter: "all" | "unread" | "bookmarked" | "read-later") => void;
+  onEditFeed?: (feedId: string) => void;
   isAuthenticated?: boolean;
 }
 
@@ -50,6 +51,7 @@ export function Sidebar({
   onSelectFolder,
   onSelectTag,
   onFilterChange,
+  onEditFeed,
   isAuthenticated = true,
 }: SidebarProps) {
   const [folders, setFolders] = useState<FolderItem[]>([]);
@@ -57,7 +59,6 @@ export function Sidebar({
   const [tags, setTags] = useState<TagItem[]>([]);
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
-  const [editingFeedId, setEditingFeedId] = useState<string | null>(null);
   const [copiedFeedId, setCopiedFeedId] = useState<string | null>(null);
 
   // Inline creation
@@ -72,17 +73,33 @@ export function Sidebar({
 
   async function loadData() {
     try {
-      const [foldersRes, feedsRes, tagsRes, unreadRes] = await Promise.all([
-        fetch("/api/folders"),
-        fetch("/api/feeds"),
-        fetch("/api/tags"),
-        fetch("/api/stats/unread-counts"),
+      // Use admin routes when authenticated (always fresh, no CDN cache)
+      // Fall back to public cached routes for anonymous users
+      const fetchFeeds = isAuthenticated
+        ? apiFetch<any[]>(adminUrl("/feeds"))
+        : publicFetch<any[]>("/feeds");
+      const fetchFolders = isAuthenticated
+        ? apiFetch<any[]>(adminUrl("/folders"))
+        : publicFetch<any[]>("/folders");
+      const fetchTags = isAuthenticated
+        ? apiFetch<TagItem[]>(adminUrl("/tags"))
+        : publicFetch<TagItem[]>("/tags");
+
+      const [foldersData, feedsData, tagsData] = await Promise.all([
+        fetchFolders,
+        fetchFeeds,
+        fetchTags,
       ]);
 
-      const foldersData = (await foldersRes.json()) as any[];
-      const feedsData = (await feedsRes.json()) as any[];
-      const tagsData = (await tagsRes.json()) as any[];
-      const unreadCounts = (await unreadRes.json()) as Record<string, number>;
+      // Unread counts are admin-only (require auth), so use admin route if logged in
+      let unreadCounts: Record<string, number> = {};
+      if (isAuthenticated) {
+        try {
+          unreadCounts = await apiFetch<Record<string, number>>(adminUrl("/stats/unread-counts"));
+        } catch {
+          // Not authenticated — no unread counts, that's fine
+        }
+      }
 
       const folderMap = new Map<string, FeedItem[]>();
       const uncategorized: FeedItem[] = [];
@@ -156,9 +173,8 @@ export function Sidebar({
   async function createFolder() {
     if (!newFolderName.trim()) return;
     try {
-      await fetch("/api/folders", {
+      await apiFetch(adminUrl("/folders"), {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name: newFolderName.trim() }),
       });
       setNewFolderName("");
@@ -172,9 +188,8 @@ export function Sidebar({
   async function createTag() {
     if (!newTagName.trim()) return;
     try {
-      await fetch("/api/tags", {
+      await apiFetch(adminUrl("/tags"), {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name: newTagName.trim() }),
       });
       setNewTagName("");
@@ -193,7 +208,7 @@ export function Sidebar({
   ];
 
   return (
-    <div className="flex h-full flex-col border-r bg-muted/30 max-w-xs">
+    <div className="flex h-full flex-col border-r bg-muted/30">
       {/* Filter tabs */}
       <div className="flex gap-1 border-b p-2">
         {filters.map((f) => (
@@ -307,7 +322,7 @@ export function Sidebar({
                       </button>
                       {isAuthenticated && (
                         <button
-                          onClick={(e) => { e.stopPropagation(); setEditingFeedId(feed.id); }}
+                          onClick={(e) => { e.stopPropagation(); onEditFeed?.(feed.id); }}
                           className="shrink-0 p-1 opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-foreground transition-opacity"
                           title="Edit feed"
                         >
@@ -355,7 +370,7 @@ export function Sidebar({
                   </button>
                   {isAuthenticated && (
                     <button
-                      onClick={() => setEditingFeedId(feed.id)}
+                      onClick={() => onEditFeed?.(feed.id)}
                       className="shrink-0 p-1 opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-foreground transition-opacity"
                       title="Edit feed"
                     >
@@ -438,16 +453,6 @@ export function Sidebar({
         </div>
       )}
 
-      {/* Feed edit dialog — auth only */}
-      {isAuthenticated && (
-        <FeedEditDialog
-          feedId={editingFeedId}
-          open={editingFeedId !== null}
-          onOpenChange={(open) => { if (!open) setEditingFeedId(null); }}
-          onUpdated={loadData}
-          onDeleted={loadData}
-        />
-      )}
     </div>
   );
 }

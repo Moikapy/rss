@@ -1,14 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getDb } from "@/lib/db/client";
+import { getDatabase } from "@/lib/db/get-db";
 import { folders } from "@/lib/db/schema";
 import { eq, asc } from "drizzle-orm";
 
-export const runtime = "nodejs";
-
 // GET /api/folders
 export async function GET() {
-  const db = getDb();
-  const allFolders = db.select().from(folders).orderBy(asc(folders.order)).all();
+  const db = await getDatabase();
+  const allFolders = await db.select().from(folders).orderBy(asc(folders.order)).all();
   return NextResponse.json(allFolders);
 }
 
@@ -21,10 +19,10 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Folder name is required" }, { status: 400 });
   }
 
-  const db = getDb();
+  const db = await getDatabase();
   const id = crypto.randomUUID();
 
-  db.insert(folders).values({
+  await db.insert(folders).values({
     id,
     name,
     order: order ?? 0,

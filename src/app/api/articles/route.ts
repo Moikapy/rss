@@ -1,9 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getDb } from "@/lib/db/client";
+import { getDatabase } from "@/lib/db/get-db";
 import { articles, feeds } from "@/lib/db/schema";
 import { eq, desc, and, sql } from "drizzle-orm";
-
-export const runtime = "nodejs";
 
 // GET /api/articles — list articles with filters
 export async function GET(request: NextRequest) {
@@ -13,7 +11,7 @@ export async function GET(request: NextRequest) {
   const limit = parseInt(searchParams.get("limit") || "50");
   const offset = parseInt(searchParams.get("offset") || "0");
 
-  const db = getDb();
+  const db = await getDatabase();
 
   const conditions = [];
 
@@ -31,7 +29,7 @@ export async function GET(request: NextRequest) {
 
   const where = conditions.length > 0 ? and(...conditions) : undefined;
 
-  const result = db.select({
+  const result = await db.select({
     id: articles.id,
     feedId: articles.feedId,
     title: articles.title,

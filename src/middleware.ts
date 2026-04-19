@@ -19,6 +19,14 @@ export const config = {
   matcher: ["/((?!_next/static|_next/image|favicon.ico).*)"],
 };
 
+/** Check if request has auth — cookie OR Authorization header */
+function hasAuth(request: NextRequest): boolean {
+  const cookie = request.cookies.get(COOKIE_NAME)?.value;
+  if (cookie) return true;
+  const authHeader = request.headers.get("authorization");
+  return !!authHeader && authHeader.startsWith("Bearer ");
+}
+
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
@@ -36,8 +44,6 @@ export async function middleware(request: NextRequest) {
     return NextResponse.next();
   }
 
-  const token = request.cookies.get(COOKIE_NAME)?.value;
-
   // API routes: public GETs for read, auth required for mutations
   if (pathname.startsWith("/api/")) {
     // Allow GET on public read routes without auth
@@ -45,8 +51,8 @@ export async function middleware(request: NextRequest) {
       return NextResponse.next();
     }
 
-    // All other API routes require auth
-    if (!token) {
+    // All other API routes require auth (cookie or Bearer token)
+    if (!hasAuth(request)) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 

@@ -1,10 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { verifyToken, getTokenFromRequest } from "@/lib/auth/jwt";
-import { getDb } from "@/lib/db/client";
+import { getDatabase } from "@/lib/db/get-db";
 import { users } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
-
-export const runtime = "nodejs";
 
 // GET /api/auth/me — returns current user or null
 export async function GET(request: NextRequest) {
@@ -20,8 +18,8 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    const db = getDb();
-    const user = db.select().from(users).where(eq(users.id, payload.sub)).get();
+    const db = await getDatabase();
+    const user = await db.select().from(users).where(eq(users.id, payload.sub)).get();
     if (!user) {
       return NextResponse.json({ authenticated: false });
     }

@@ -4,6 +4,7 @@ import { getDb } from "./client";
 /**
  * Initialize FTS5 virtual table and triggers for local SQLite.
  * This is only called in dev — D1 doesn't support FTS5.
+ * On D1, search falls back to LIKE queries.
  */
 export function initSearchIndex() {
   const db = getDb();

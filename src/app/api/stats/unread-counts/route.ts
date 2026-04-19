@@ -1,15 +1,13 @@
 import { NextResponse } from "next/server";
-import { getDb } from "@/lib/db/client";
+import { getDatabase } from "@/lib/db/get-db";
 import { articles } from "@/lib/db/schema";
 import { eq, sql } from "drizzle-orm";
 
-export const runtime = "nodejs";
-
 // GET /api/stats/unread-counts — unread counts per feed
 export async function GET() {
-  const db = getDb();
+  const db = await getDatabase();
 
-  const counts = db.select({
+  const counts = await db.select({
     feedId: articles.feedId,
     unread: sql<number>`count(*)`.as("unread"),
   })

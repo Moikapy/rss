@@ -1,13 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getDb } from "@/lib/db/client";
+import { getDatabase } from "@/lib/db/get-db";
 import { tags } from "@/lib/db/schema";
-
-export const runtime = "nodejs";
 
 // GET /api/tags
 export async function GET() {
-  const db = getDb();
-  const allTags = db.select().from(tags).all();
+  const db = await getDatabase();
+  const allTags = await db.select().from(tags).all();
   return NextResponse.json(allTags);
 }
 
@@ -20,11 +18,11 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Tag name is required" }, { status: 400 });
   }
 
-  const db = getDb();
+  const db = await getDatabase();
   const id = crypto.randomUUID();
 
   try {
-    db.insert(tags).values({ id, name }).run();
+    await db.insert(tags).values({ id, name }).run();
     return NextResponse.json({ id, success: true }, { status: 201 });
   } catch (err: any) {
     if (err.message?.includes("UNIQUE")) {

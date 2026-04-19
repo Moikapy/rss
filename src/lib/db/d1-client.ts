@@ -1,6 +1,8 @@
 /**
  * Database adapter for Cloudflare D1 production environment.
  * Used when the app runs on Cloudflare Workers/Pages.
+ *
+ * D1 operations are async — all drizzle calls must be `await`ed.
  */
 
 import { drizzle } from "drizzle-orm/d1";

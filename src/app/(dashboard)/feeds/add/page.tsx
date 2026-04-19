@@ -1,4 +1,5 @@
 "use client";
+import { apiUrl, apiFetch, publicFetch, adminUrl } from "@/lib/api/client";
 
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
@@ -18,8 +19,7 @@ export default function AddFeedPage() {
   const [error, setError] = useState("");
 
   useEffect(() => {
-    fetch("/api/folders")
-      .then((res) => res.json() as Promise<{ id: string; name: string }[]>)
+    publicFetch<{ id: string; name: string }[]>("/folders")
       .then(setFolders)
       .catch(() => {});
   }, []);
@@ -30,9 +30,8 @@ export default function AddFeedPage() {
     setLoading(true);
 
     try {
-      const res = await fetch("/api/feeds", {
+      const data = await apiFetch<{ id?: string; error?: string; success?: boolean }>(adminUrl("/feeds"), {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           url,
           title: title || undefined,
@@ -40,9 +39,7 @@ export default function AddFeedPage() {
         }),
       });
 
-      const data = (await res.json()) as { id?: string; error?: string; success?: boolean };
-
-      if (!res.ok) {
+      if (data.error) {
         setError(data.error || "Failed to add feed");
         setLoading(false);
         return;
@@ -52,7 +49,7 @@ export default function AddFeedPage() {
       router.push("/");
 
       // Kick off feed fetch in the background (don't await)
-      fetch("/api/cron/fetch-feeds", { method: "POST" }).catch(() => {});
+      apiFetch(adminUrl("/fetch-feeds"), { method: "POST" }).catch(() => {});
     } catch {
       setError("Something went wrong");
       setLoading(false);

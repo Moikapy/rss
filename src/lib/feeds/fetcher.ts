@@ -1,6 +1,6 @@
-import { getDb } from "@/lib/db/client";
-import { feeds, articles } from "@/lib/db/schema";
-import { eq } from "drizzle-orm";
+import { getDatabase } from "@/lib/db/get-db";
+import { feeds, articles as articlesTable } from "@/lib/db/schema";
+import { eq, and } from "drizzle-orm";
 import { fetchAndParseFeed, ParsedArticle } from "./parser";
 import { extractContent } from "./extractor";
 
@@ -15,8 +15,8 @@ export interface FetchResult {
  * Fetch a single feed and store new articles.
  */
 export async function fetchFeed(feedId: string): Promise<FetchResult> {
-  const db = getDb();
-  const feed = db.select().from(feeds).where(eq(feeds.id, feedId)).get();
+  const db = await getDatabase();
+  const feed = await db.select().from(feeds).where(eq(feeds.id, feedId)).get();
 
   if (!feed) {
     return { feedId, feedTitle: "Unknown", newArticles: 0, errors: ["Feed not found"] };
@@ -33,7 +33,7 @@ export async function fetchFeed(feedId: string): Promise<FetchResult> {
     const parsed = await fetchAndParseFeed(feed.url);
 
     // Update feed metadata
-    db.update(feeds)
+    await db.update(feeds)
       .set({
         title: parsed.title || feed.title,
         siteUrl: parsed.siteUrl || feed.siteUrl,
@@ -44,18 +44,17 @@ export async function fetchFeed(feedId: string): Promise<FetchResult> {
       .where(eq(feeds.id, feedId))
       .run();
 
-    // Process articles
     for (const item of parsed.items) {
       try {
-        // Check for duplicate
-        const existing = db.select({ id: articles.id })
-          .from(articles)
-          .where(eq(articles.url, item.url))
+        // Check for duplicate — scoped to (feedId, url) to allow same URL across different feeds
+        const existing = await db.select({ id: articlesTable.id })
+          .from(articlesTable)
+          .where(and(eq(articlesTable.feedId, feedId), eq(articlesTable.url, item.url)))
           .get();
 
         if (existing) continue;
 
-        // Try full content extraction
+        // Use content from feed first, then try full extraction, then summary fallback
         let content = item.content;
         let author = item.author;
 
@@ -69,8 +68,13 @@ export async function fetchFeed(feedId: string): Promise<FetchResult> {
           }
         }
 
+        // If still no content, use summary as fallback content
+        if (!content && item.summary) {
+          content = item.summary.includes("<") ? item.summary : `<p>${item.summary}</p>`;
+        }
+
         // Insert article
-        db.insert(articles).values({
+        await db.insert(articlesTable).values({
           id: crypto.randomUUID(),
           feedId,
           title: item.title,
@@ -101,8 +105,8 @@ export async function fetchFeed(feedId: string): Promise<FetchResult> {
  * Fetch all feeds that have autoRefresh enabled and are due for a refresh.
  */
 export async function fetchAllFeeds(): Promise<FetchResult[]> {
-  const db = getDb();
-  const allFeeds = db.select().from(feeds).all();
+  const db = await getDatabase();
+  const allFeeds = await db.select().from(feeds).all();
   const results: FetchResult[] = [];
 
   for (const feed of allFeeds) {

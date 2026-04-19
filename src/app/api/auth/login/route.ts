@@ -1,10 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getDb } from "@/lib/db/client";
+import { getDatabase } from "@/lib/db/get-db";
 import { users } from "@/lib/db/schema";
 import { verifyPassword, signToken, setTokenCookie } from "@/lib/auth";
 import { eq } from "drizzle-orm";
-
-export const runtime = "nodejs";
 
 export async function POST(request: NextRequest) {
   const body = (await request.json()) as Record<string, any>;
@@ -14,8 +12,8 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Username and password required" }, { status: 400 });
   }
 
-  const db = getDb();
-  const user = db.select().from(users).where(eq(users.username, username)).get();
+  const db = await getDatabase();
+  const user = await db.select().from(users).where(eq(users.username, username)).get();
 
   if (!user) {
     return NextResponse.json({ error: "Invalid credentials" }, { status: 401 });

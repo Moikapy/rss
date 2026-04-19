@@ -68,7 +68,7 @@ function parseXmlFeed(text: string): ParsedFeed {
 
   const feed: ParsedFeed = {
     title: extractText(text, "title") || "Untitled Feed",
-    siteUrl: extractAttr(text, "link", "href") || extractText(text, "link") || null,
+    siteUrl: extractAlternateLink(text) || extractAttr(text, "link", "href") || extractText(text, "link") || null,
     description: extractText(text, "description") || null,
     items: [],
   };
@@ -83,8 +83,8 @@ function parseXmlFeed(text: string): ParsedFeed {
     const article: ParsedArticle = {
       title: extractText(itemXml, "title") || "Untitled",
       url:
-        extractAttr(itemXml, "link", "href") ||  // Atom style
-        extractText(itemXml, "link") ||           // RSS style
+        extractAlternateLink(itemXml) ||  // Atom <link rel="alternate">
+        extractText(itemXml, "link") ||   // RSS style
         "",
       author:
         extractText(itemXml, "author > name") ||
@@ -136,6 +136,20 @@ function extractAttr(xml: string, tag: string, attr: string): string | null {
   const regex = new RegExp(`<${tag}[^>]*${attr}=["']([^"']*)["']`, "i");
   const match = xml.match(regex);
   return match ? match[1] : null;
+}
+
+/**
+ * Extract the correct article URL from Atom <link rel="alternate">.
+ * Falls back to first href link, then null.
+ */
+function extractAlternateLink(xml: string): string | null {
+  // Atom: <link rel="alternate" href="..." />
+  const altMatch = xml.match(/<link[^>]*rel=["']alternate["'][^>]*href=["']([^"']*)["']/i) ||
+    xml.match(/<link[^>]*href=["']([^"']*)["'][^>]*rel=["']alternate["']/i);
+  if (altMatch) return altMatch[1];
+
+  // No alternate link — try first href (may not be correct but better than nothing)
+  return extractAttr(xml, "link", "href");
 }
 
 function parseDate(dateStr: string): Date {

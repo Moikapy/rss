@@ -1,4 +1,5 @@
 "use client";
+import { apiUrl, apiFetch, authHeaders, userUrl } from "@/lib/api/client";
 
 import { useEffect, useRef, useState, useCallback } from "react";
 import { Button } from "@/components/ui/button";
@@ -23,6 +24,7 @@ import {
   Maximize2,
   Minimize2,
   Globe,
+  Key,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import ReactMarkdown from "react-markdown";
@@ -174,39 +176,61 @@ export function ChatPanel({ feedId, articleId, onClose }: ChatPanelProps) {
   const [availableModels, setAvailableModels] = useState<string[]>([]);
   const [selectedModel, setSelectedModel] = useState("");
   const [modelDropdownOpen, setModelDropdownOpen] = useState(false);
+  const [savedModel, setSavedModel] = useState("");
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+
+  // Popular Ollama Cloud models for quick selection
+  const POPULAR_MODELS = [
+    { id: "glm-5.1:cloud", label: "GLM-5.1 Cloud" },
+    { id: "llama3.3:70b", label: "Llama 3.3 70B" },
+    { id: "qwen2.5:72b", label: "Qwen 2.5 72B" },
+    { id: "deepseek-r1:14b", label: "DeepSeek R1 14B" },
+    { id: "gemma3:12b", label: "Gemma 3 12B" },
+    { id: "mistral-small:24b", label: "Mistral Small 24B" },
+  ];
 
   async function connectToOllama() {
     setOllamaStatus("connecting");
     setErrorMsg("");
     try {
-      const res = await fetch("/api/chat/health");
-      const data = (await res.json()) as { ok: boolean; models: string[]; error?: string };
+      // Load saved model preference from user settings
+      const settingsData = await apiFetch<{ ollamaModel?: string }>(userUrl("/settings")).catch(() => ({ ollamaModel: undefined }));
+      const defaultModel = settingsData.ollamaModel || "glm-5.1:cloud";
+      setSavedModel(defaultModel);
+
+      // Check Ollama health — BYOK requires a user API key
+      const data = await apiFetch<{ ok: boolean; hasKey?: boolean; models: string[]; error?: string }>("/api/chat/health");
+
+      if (data.hasKey === false) {
+        // No API key set — BYOK required
+        setOllamaStatus("error");
+        setErrorMsg("Bring your own Ollama API key. Set it in Settings → AI Chat.");
+        return;
+      }
+
       if (data.ok) {
         setOllamaStatus("ok");
-        setAvailableModels(data.models);
-        const chatModels = data.models.filter(
-          (m) =>
-            !m.includes("embed") &&
-            !m.includes("mxbai") &&
-            !m.includes("nomic") &&
-            !m.includes("all-minilm")
-        );
-        if (chatModels.length > 0) {
-          setSelectedModel(chatModels[0]);
-        } else if (data.models.length > 0) {
-          setSelectedModel(data.models[0]);
-        }
+        setAvailableModels(data.models || []);
+        setSelectedModel(defaultModel);
       } else {
-        setOllamaStatus("error");
-        setErrorMsg(data.error || "Ollama not reachable");
+        // Health check failed but user has a key — Ollama Cloud may still work
+        setOllamaStatus("ok");
+        setAvailableModels([]);
+        setSelectedModel(defaultModel);
       }
     } catch {
-      setOllamaStatus("error");
-      setErrorMsg("Cannot connect to Ollama. Make sure it's running on localhost:11434");
+      // Even if health fails, try to use saved model
+      setOllamaStatus("ok");
+      setAvailableModels([]);
+      setSelectedModel(savedModel || "glm-5.1:cloud");
     }
   }
+
+  // Auto-connect on mount if previously connected
+  useEffect(() => {
+    connectToOllama();
+  }, []);
 
   // Auto-scroll to bottom when messages or status change
   useEffect(() => {
@@ -233,12 +257,13 @@ export function ChatPanel({ feedId, articleId, onClose }: ChatPanelProps) {
     const allMessages = [...messages, userMessage];
 
     try {
-      const res = await fetch("/api/chat", {
+      const res = await fetch(apiUrl("/api/chat"), {
         method: "POST",
         headers: {
+          ...authHeaders(),
           "Content-Type": "application/json",
-          Accept: "text/event-stream",
         },
+        credentials: "include",
         body: JSON.stringify({
           messages: allMessages,
           feedId: feedId || undefined,
@@ -249,96 +274,41 @@ export function ChatPanel({ feedId, articleId, onClose }: ChatPanelProps) {
 
       if (!res.ok) {
         const err = (await res.json()) as { error?: string };
-        throw new Error(err.error || "Chat request failed");
+        throw new Error(err.error || `Chat error ${res.status}`);
       }
 
-      if (res.headers.get("content-type")?.includes("text/event-stream")) {
-        const reader = res.body?.getReader();
-        if (!reader) throw new Error("No response body");
+      // API returns JSON: { content, thinking, toolCalls, model, done }
+      const data = (await res.json()) as {
+        content?: string;
+        thinking?: string;
+        error?: string;
+        model?: string;
+        toolCalls?: Array<{ name: string; args?: Record<string, unknown> }>;
+        done?: boolean;
+      };
 
-        const decoder = new TextDecoder();
-        let assistantContent = "";
-        let assistantThinking = "";
-        const assistantToolCalls: Message["toolCalls"] = [];
-        setMessages((prev) => [
-          ...prev,
-          { role: "assistant", content: "", thinking: "", toolCalls: [] },
-        ]);
+      if (data.error) throw new Error(data.error);
 
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-
-          const chunk = decoder.decode(value, { stream: true });
-          for (const line of chunk.split("\n")) {
-            if (!line.startsWith("data: ")) continue;
-            try {
-              const data = JSON.parse(line.slice(6)) as {
-                content?: string;
-                thinking?: string;
-                error?: string;
-                done?: boolean;
-                tool_call?: string;
-                tool_args?: Record<string, unknown>;
-                tool_result?: string;
-                status?: string;
-              };
-              if (data.error) {
-                setErrorMsg(data.error);
-                setAgentStatus({ type: "error", message: data.error });
-                break;
-              }
-              if (data.done) {
-                setAgentStatus({ type: "idle" });
-                break;
-              }
-              if (data.thinking) {
-                assistantThinking += data.thinking;
-                setAgentStatus({ type: "thinking" });
-              }
-              if (data.tool_call) {
-                assistantToolCalls.push({
-                  name: data.tool_call,
-                  args: data.tool_args,
-                });
-                setAgentStatus({ type: "tool", tool: data.tool_call, args: data.tool_args });
-              }
-              if (data.content) {
-                assistantContent += data.content;
-                setAgentStatus({ type: "responding" });
-              }
-              setMessages((prev) => {
-                const updated = [...prev];
-                updated[updated.length - 1] = {
-                  role: "assistant",
-                  content: assistantContent,
-                  thinking: assistantThinking || undefined,
-                  toolCalls: assistantToolCalls.length > 0 ? assistantToolCalls : undefined,
-                };
-                return updated;
-              });
-            } catch {
-              // skip malformed chunks
-            }
-          }
-        }
+      // Show tool activity in the status bar after completion
+      // (non-streaming means we can't show them during execution, but at least
+      // the ToolCallIndicator component will render inline)
+      if (data.toolCalls && data.toolCalls.length > 0) {
+        setAgentStatus({ type: "tool", tool: data.toolCalls[0].name, args: data.toolCalls[0].args });
+        // Briefly show tool status then clear
+        setTimeout(() => setAgentStatus({ type: "idle" }), 1500);
       } else {
-        const data = (await res.json()) as {
-          error?: string;
-          content?: string;
-          thinking?: string;
-        };
-        if (data.error) throw new Error(data.error);
-        setMessages((prev) => [
-          ...prev,
-          {
-            role: "assistant",
-            content: data.content || "",
-            thinking: data.thinking || undefined,
-          },
-        ]);
         setAgentStatus({ type: "idle" });
       }
+
+      setMessages((prev) => [
+        ...prev,
+        {
+          role: "assistant",
+          content: data.content || "",
+          thinking: data.thinking || undefined,
+          toolCalls: data.toolCalls && data.toolCalls.length > 0 ? data.toolCalls : undefined,
+        },
+      ]);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Failed to get response";
       setErrorMsg(msg);
@@ -406,33 +376,60 @@ export function ChatPanel({ feedId, articleId, onClose }: ChatPanelProps) {
         </div>
       </div>
 
-      {/* Model selector */}
-      {ollamaStatus === "ok" && chatModels.length > 0 && (
+      {/* Model selector — always show when connected */}
+      {ollamaStatus === "ok" && (
         <div className="relative border-b px-4 py-2">
           <button
             onClick={() => setModelDropdownOpen(!modelDropdownOpen)}
             className="flex w-full items-center justify-between rounded-md border px-3 py-1.5 text-xs hover:bg-muted"
           >
-            <span className="truncate">{selectedModel || "Select model"}</span>
+            <span className="truncate">{POPULAR_MODELS.find(m => m.id === selectedModel)?.label || selectedModel || "Select model"}</span>
             <ChevronDown className="h-3 w-3 shrink-0 ml-1" />
           </button>
           {modelDropdownOpen && (
-            <div className="absolute left-4 right-4 top-full z-50 mt-1 max-h-48 overflow-y-auto rounded-md border bg-popover shadow-md">
-              {chatModels.map((model) => (
+            <div className="absolute left-4 right-4 top-full z-50 mt-1 max-h-64 overflow-y-auto rounded-md border bg-popover shadow-md">
+              {/* Popular cloud models */}
+              <div className="px-3 py-1.5 text-[10px] font-medium text-muted-foreground uppercase tracking-wider">
+                Popular Models
+              </div>
+              {POPULAR_MODELS.map((model) => (
                 <button
-                  key={model}
+                  key={model.id}
                   onClick={() => {
-                    setSelectedModel(model);
+                    setSelectedModel(model.id);
                     setModelDropdownOpen(false);
                   }}
                   className={cn(
                     "flex w-full items-center px-3 py-2 text-xs hover:bg-muted",
-                    model === selectedModel && "font-medium text-primary"
+                    model.id === selectedModel && "font-medium text-primary"
                   )}
                 >
-                  {model}
+                  {model.label}
                 </button>
               ))}
+              {/* Local models from Ollama instance (if available) */}
+              {chatModels.length > 0 && (
+                <>
+                  <div className="px-3 py-1.5 text-[10px] font-medium text-muted-foreground uppercase tracking-wider border-t mt-1">
+                    Local Models
+                  </div>
+                  {chatModels.map((model) => (
+                    <button
+                      key={model}
+                      onClick={() => {
+                        setSelectedModel(model);
+                        setModelDropdownOpen(false);
+                      }}
+                      className={cn(
+                        "flex w-full items-center px-3 py-2 text-xs hover:bg-muted",
+                        model === selectedModel && "font-medium text-primary"
+                      )}
+                    >
+                      {model}
+                    </button>
+                  ))}
+                </>
+              )}
               {availableModels.length > chatModels.length && (
                 <>
                   <div className="px-3 py-1 text-[10px] text-muted-foreground">
@@ -496,20 +493,32 @@ export function ChatPanel({ feedId, articleId, onClose }: ChatPanelProps) {
                 </div>
               )}
               {ollamaStatus === "error" && (
-                <div className="mt-2 flex flex-col items-center gap-2">
+                <div className="mt-2 flex flex-col items-center gap-3">
                   <div className="flex items-center gap-2 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700 dark:border-red-800 dark:bg-red-950 dark:text-red-400">
                     <AlertCircle className="h-3.5 w-3.5 shrink-0" />
                     <span>{errorMsg}</span>
                   </div>
-                  <Button
-                    onClick={connectToOllama}
-                    variant="outline"
-                    size="sm"
-                    className="gap-2"
-                  >
-                    <Bot className="h-3.5 w-3.5" />
-                    Retry connection
-                  </Button>
+                  {errorMsg.includes("API key") ? (
+                    <Button
+                      onClick={() => (window.location.href = "/settings")}
+                      variant="outline"
+                      size="sm"
+                      className="gap-2"
+                    >
+                      <Key className="h-3.5 w-3.5" />
+                      Set API Key
+                    </Button>
+                  ) : (
+                    <Button
+                      onClick={connectToOllama}
+                      variant="outline"
+                      size="sm"
+                      className="gap-2"
+                    >
+                      <Bot className="h-3.5 w-3.5" />
+                      Retry
+                    </Button>
+                  )}
                 </div>
               )}
               {ollamaStatus === "ok" && (
@@ -590,15 +599,11 @@ export function ChatPanel({ feedId, articleId, onClose }: ChatPanelProps) {
             }}
             onKeyDown={handleKeyDown}
             placeholder={
-              ollamaStatus === "disconnected"
-                ? "Connect to Ollama to start chatting..."
-                : ollamaStatus === "connecting"
-                ? "Connecting to Ollama..."
-                : ollamaStatus === "error"
-                ? "Ollama not connected..."
+              ollamaStatus !== "ok"
+                ? "Set your API key in Settings..."
                 : !selectedModel
-                ? "Select a model first..."
-                : "Ask about your feeds... (Shift+Enter for new lines)"
+                ? "Select a model..."
+                : "Ask about your feeds..."
             }
             disabled={loading || ollamaStatus !== "ok" || !selectedModel}
             rows={1}

@@ -1,0 +1,39 @@
+name = "0xrss-api"
+main = "src/index.ts"
+compatibility_date = "2026-04-08"
+compatibility_flags = ["nodejs_compat"]
+
+# Use unbound Worker for SSR-level CPU headroom
+[limits]
+purpose = "unbound"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "0xrss-db"
+database_id = "3b86299e-f7e9-4141-91fe-ab1182d416a6"
+
+# KV for caching and sessions
+[[kv_namespaces]]
+binding = "CACHE"
+id = "2208a991a24e4d02afb00646a058760d"
+
+# Queues for async feed fetching
+[[queues.producers]]
+queue = "feed-fetch-queue"
+binding = "FEED_QUEUE"
+
+[[queues.consumers]]
+queue = "feed-fetch-queue"
+max_batch_size = 10
+max_batch_timeout = 30
+max_retries = 3
+
+# Cron trigger for scheduled feed refresh
+[triggers]
+crons = ["*/30 * * * *"]
+
+# Observability
+[observability]
+[observability.logs]
+enabled = false
+invocation_logs = true

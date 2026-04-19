@@ -1,15 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getDb } from "@/lib/db/client";
+import { getDatabase } from "@/lib/db/get-db";
 import { users } from "@/lib/db/schema";
 import { hashPassword, signToken, setTokenCookie } from "@/lib/auth";
 
-export const runtime = "nodejs";
-
 export async function POST(request: NextRequest) {
-  const db = getDb();
+  const db = await getDatabase();
 
   // Check if any user already exists
-  const existingUser = db.select().from(users).get();
+  const existingUser = await db.select().from(users).get();
   if (existingUser) {
     return NextResponse.json({ error: "Setup already complete" }, { status: 400 });
   }
@@ -28,7 +26,7 @@ export async function POST(request: NextRequest) {
   const hashedPassword = await hashPassword(password);
   const id = crypto.randomUUID();
 
-  db.insert(users).values({
+  await db.insert(users).values({
     id,
     username,
     password: hashedPassword,

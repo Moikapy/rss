@@ -1,5 +1,5 @@
 import { sql, eq, desc, and, like } from "drizzle-orm";
-import { getDb } from "@/lib/db/client";
+import { getDatabase } from "@/lib/db/get-db";
 import { articles, feeds } from "@/lib/db/schema";
 import { embedText, embedBatch, cosineSimilarity } from "./ollama";
 
@@ -32,7 +32,7 @@ export async function searchArticles(
   } = {}
 ): Promise<SearchResult[]> {
   const { limit = 8, feedId, skipEmbeddings = false } = options;
-  const db = getDb();
+  const db = await getDatabase();
 
   const ftsResults = await ftsSearch(db, query, limit * 2, feedId);
   const likeResults = await likeSearch(db, query, limit * 2, feedId);
@@ -51,7 +51,7 @@ export async function searchArticles(
   const feedIds = [...new Set(fused.map((r) => r.feedId).filter(Boolean))] as string[];
   const feedMap = new Map<string, string>();
   if (feedIds.length > 0) {
-    const feedRows = db.select({ id: feeds.id, title: feeds.title })
+    const feedRows = await db.select({ id: feeds.id, title: feeds.title })
       .from(feeds)
       .where(sql`${feeds.id} IN (${sql.join(feedIds.map((id) => sql`${id}`), sql`, `)})`)
       .all();
@@ -69,7 +69,7 @@ export async function searchArticles(
 // ─── Strategy 1: FTS5 ──────────────────────────────────────────────────────
 
 async function ftsSearch(
-  db: ReturnType<typeof getDb>,
+  db: ReturnType<typeof getDatabase> extends Promise<infer T> ? T : never,
   query: string,
   limit: number,
   feedId?: string
@@ -86,7 +86,7 @@ async function ftsSearch(
 
     const feedFilter = feedId ? sql` AND a.feed_id = '${feedId}'` : sql``;
 
-    const rows = db.all(sql`
+    const rows = await db.all(sql`
       SELECT a.id, a.title, a.url, a.summary, a.content, a.published_at, a.feed_id,
              f.title as feed_title,
              fts.rank
@@ -118,7 +118,7 @@ async function ftsSearch(
 // ─── Strategy 2: LIKE keyword search ────────────────────────────────────────
 
 async function likeSearch(
-  db: ReturnType<typeof getDb>,
+  db: ReturnType<typeof getDatabase> extends Promise<infer T> ? T : never,
   query: string,
   limit: number,
   feedId?: string
@@ -146,7 +146,7 @@ async function likeSearch(
 
   try {
     const rows = finalWhere
-      ? db.select({
+      ? await db.select({
           id: articles.id,
           title: articles.title,
           url: articles.url,
@@ -186,7 +186,7 @@ async function likeSearch(
 // ─── Strategy 3: Embedding search ──────────────────────────────────────────
 
 async function embeddingSearch(
-  db: ReturnType<typeof getDb>,
+  db: ReturnType<typeof getDatabase> extends Promise<infer T> ? T : never,
   query: string,
   limit: number,
   feedId?: string
@@ -199,7 +199,7 @@ async function embeddingSearch(
       conditions.push(eq(articles.feedId, feedId));
     }
 
-    const candidates = db
+    const candidates = await db
       .select({
         id: articles.id,
         title: articles.title,
@@ -218,21 +218,21 @@ async function embeddingSearch(
     if (candidates.length === 0) return [];
 
     const texts = candidates.map(
-      (a) => `${a.title}. ${a.summary || ""}`.substring(0, 500)
+      (a: any) => `${a.title}. ${a.summary || ""}`.substring(0, 500)
     );
     const embeddings = await embedBatch(texts);
 
-    const scored = candidates.map((article, i) => ({
+    const scored = candidates.map((article: any, i: number) => ({
       article,
       score: cosineSimilarity(queryEmbedding, embeddings[i]),
     }));
 
     // Filter out low-relevance results
     return scored
-      .filter(({ score }) => score > 0.3)
-      .sort((a, b) => b.score - a.score)
+      .filter(({ score }: { score: number }) => score > 0.3)
+      .sort((a: { score: number }, b: { score: number }) => b.score - a.score)
       .slice(0, limit)
-      .map(({ article, score }) => ({
+      .map(({ article, score }: { article: any; score: number }) => ({
         articleId: article.id,
         title: article.title,
         url: article.url,

@@ -1,9 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getDb } from "@/lib/db/client";
+import { getDatabase } from "@/lib/db/get-db";
 import { articles, feeds } from "@/lib/db/schema";
 import { sql, eq, desc, or, like } from "drizzle-orm";
-
-export const runtime = "nodejs";
 
 // GET /api/search?q=query
 export async function GET(request: NextRequest) {
@@ -14,11 +12,11 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ results: [] });
   }
 
-  const db = getDb();
+  const db = await getDatabase();
 
   // Try FTS5 first (local SQLite)
   try {
-    const ftsResults = db.all(sql`
+    const ftsResults = await db.all(sql`
       SELECT a.id, a.feed_id, a.title, a.url, a.author, a.summary, a.published_at, a.read, a.bookmarked, a.read_later, f.title as feed_title
       FROM articles a
       LEFT JOIN feeds f ON a.feed_id = f.id
@@ -38,7 +36,7 @@ export async function GET(request: NextRequest) {
   // Fallback: LIKE queries on title and summary (D1 compatible)
   const searchTerm = `%${q.trim().toLowerCase()}%`;
 
-  const likeResults = db.select({
+  const likeResults = await db.select({
     id: articles.id,
     feedId: articles.feedId,
     title: articles.title,
