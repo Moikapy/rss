@@ -105,8 +105,7 @@ adminRoutes.patch("/api/admin/feeds/:id", async (c) => {
   }
 
   setValues.push(feedId);
-  const stmt = c.env.DB.prepare(`UPDATE feeds SET ${setClauses.join(", ")} WHERE id = ?`).bind(...setValues);
-  await stmt.run();
+  await c.env.DB.prepare(`UPDATE feeds SET ${setClauses.join(", ")} WHERE id = ?`).bind(...setValues).run();
 
   // Update tags if provided
   if (body.tagIds && Array.isArray(body.tagIds)) {
