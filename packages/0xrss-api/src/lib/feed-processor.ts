@@ -170,12 +170,12 @@ export async function extractContent(url: string): Promise<{ content: string | n
 }
 
 function sanitizeHtml(html: string): string {
-  return html
+  return decodeHTMLEntities(html
     .replace(/<script[\s\S]*?<\/script>/gi, "")
     .replace(/<style[\s\S]*?<\/style>/gi, "")
     .replace(/on\w+="[^"]*"/gi, "")
     .replace(/on\w+='[^']*'/gi, "")
-    .replace(/javascript:/gi, "");
+    .replace(/javascript:/gi, ""));
 }
 
 // ─── Feed Processing (queue handler) ───────────────────────────────────────
@@ -285,7 +285,24 @@ function extractText(xml: string, tag: string): string | null {
   if (content.startsWith("<![CDATA[") && content.endsWith("]]>")) {
     content = content.slice(9, -3);
   }
+  // Decode HTML entities (RSS feeds often have &#8217; &amp; etc.)
+  content = decodeHTMLEntities(content);
   return content || null;
+}
+
+/** Decode common HTML entities found in RSS/Atom feeds */
+function decodeHTMLEntities(str: string): string {
+  return str
+    // Named entities
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    // Numeric entities (decimal) &#8217; → '
+    .replace(/&#(\d+);/g, (_, code) => String.fromCodePoint(parseInt(code, 10)))
+    // Numeric entities (hex) &#x2019; → '
+    .replace(/&#x([0-9a-fA-F]+);/g, (_, code) => String.fromCodePoint(parseInt(code, 16)));
 }
 
 function extractAttr(xml: string, tag: string, attr: string): string | null {
