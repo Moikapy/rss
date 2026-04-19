@@ -34,6 +34,58 @@ const AuthContext = createContext<AuthContextType>({
   nostrAvailable: false,
 });
 
+// ─── Local JWT decoding (no server round-trip) ────────────────────────────
+
+interface JWTPayload {
+  sub: string;
+  role: string;
+  method?: string;
+  iat: number;
+  exp: number;
+}
+
+/** Decode JWT payload without verifying signature (client-side only for UI state) */
+function decodeJWTPayload(token: string): JWTPayload | null {
+  try {
+    const parts = token.split(".");
+    if (parts.length !== 3) return null;
+    const payload = JSON.parse(atob(parts[1]));
+    // Check expiry
+    if (payload.exp && payload.exp * 1000 < Date.now()) return null;
+    return payload;
+  } catch {
+    return null;
+  }
+}
+
+/** Build AuthUser from a locally-decoded JWT payload */
+function userFromToken(token: string): AuthUser | null {
+  const payload = decodeJWTPayload(token);
+  if (!payload) return null;
+
+  const userId = payload.sub;
+  let username: string | undefined;
+  let pubkey: string | undefined;
+
+  if (userId.startsWith("nostr:")) {
+    pubkey = userId.replace("nostr:", "");
+  } else if (userId.startsWith("pwd:")) {
+    username = userId.replace("pwd:", "");
+  } else {
+    username = userId; // admin users have UUID as sub
+  }
+
+  return {
+    id: userId,
+    username,
+    pubkey,
+    role: payload.role || "user",
+    method: payload.method,
+  };
+}
+
+// ─── Provider ─────────────────────────────────────────────────────────────
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [authenticated, setAuthenticated] = useState(false);
   const [user, setUser] = useState<AuthUser | null>(null);
@@ -44,8 +96,27 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setNostrAvailable(isNostrAvailable());
   }, []);
 
+  // Instant auth check: decode JWT locally, then validate in background
   useEffect(() => {
-    apiFetch<{ authenticated?: boolean; role?: string; username?: string; pubkey?: string; method?: string }>("/api/auth/me")
+    const token = localStorage.getItem(TOKEN_KEY);
+
+    if (!token) {
+      setAuthenticated(false);
+      setUser(null);
+      setLoading(false);
+      return;
+    }
+
+    // 1. Decode locally for instant UI state
+    const localUser = userFromToken(token);
+    if (localUser) {
+      setAuthenticated(true);
+      setUser(localUser);
+    }
+    setLoading(false);
+
+    // 2. Background server validation (catches expired/invalid tokens)
+    apiFetch<{ authenticated?: boolean; role?: string; username?: string; pubkey?: string; method?: string }>("/api/auth/session")
       .then((data) => {
         if (data.authenticated) {
           setAuthenticated(true);
@@ -57,22 +128,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             method: data.method,
           });
         } else {
+          // Token invalid/expired — clear it
+          localStorage.removeItem(TOKEN_KEY);
           setAuthenticated(false);
           setUser(null);
         }
       })
       .catch(() => {
-        setAuthenticated(false);
-        setUser(null);
-      })
-      .finally(() => setLoading(false));
+        // Network error — keep local auth state (optimistic)
+        // Server validation will retry on next API call
+      });
   }, []);
 
   async function login(username: string, password: string): Promise<boolean> {
     const result = await loginWithPassword(username, password);
     if (result.success && result.token) {
+      const localUser = userFromToken(result.token);
       setAuthenticated(true);
-      setUser({ id: username, username, role: result.role || "admin" });
+      setUser(localUser || { id: username, username, role: result.role || "admin" });
       return true;
     }
     return false;
@@ -97,8 +170,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   async function handleRegister(username: string, password: string): Promise<boolean> {
     const result = await registerWithPassword(username, password);
     if (result.success && result.token) {
+      const localUser = userFromToken(result.token);
       setAuthenticated(true);
-      setUser({ id: `pwd:${username}`, username, role: result.role || "user", method: "password" });
+      setUser(localUser || { id: `pwd:${username}`, username, role: result.role || "user", method: "password" });
       return true;
     }
     return false;

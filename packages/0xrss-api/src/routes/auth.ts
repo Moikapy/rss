@@ -23,9 +23,10 @@ authRoutes.use("/api/auth/change-password", rateLimit({ maxRequests: 5, windowSe
 authRoutes.use("/api/auth/*", async (c, next) => {
   await next();
   const headers = new Headers(c.res.headers);
-  headers.set("Cache-Control", "no-store, no-transform");
+  headers.set("Cache-Control", "private, no-store, no-cache, max-age=0, must-revalidate");
   headers.set("Pragma", "no-cache");
-  headers.set("Vary", "Authorization, Origin, Cookie");
+  headers.set("Vary", "Authorization, Cookie");
+  headers.delete("X-Cache");
   c.res = new Response(c.res.body, {
     status: c.res.status,
     statusText: c.res.statusText,
@@ -183,15 +184,15 @@ authRoutes.post("/api/auth/user-login", async (c) => {
 
 // ─── Auth status ──────────────────────────────────────────────────────────
 // Uses authMiddleware but catches 401 to return {authenticated: false} instead
-authRoutes.use("/api/auth/me", async (c, next) => {
+authRoutes.use("/api/auth/session", async (c, next) => {
   const token = extractToken(c);
   if (!token) {
-    return c.json({ authenticated: false }, 200, { "Cache-Control": "no-store, no-transform", "Vary": "Authorization, Origin, Cookie" });
+    return c.json({ authenticated: false }, 200, { "Cache-Control": "private, no-store, no-cache, max-age=0, must-revalidate", "Vary": "Authorization, Cookie" });
   }
   const auth = createAuth(c.env);
   const payload = await auth.verifyToken(token);
   if (!payload) {
-    return c.json({ authenticated: false }, 200, { "Cache-Control": "no-store, no-transform", "Vary": "Authorization, Origin, Cookie" });
+    return c.json({ authenticated: false }, 200, { "Cache-Control": "private, no-store, no-cache, max-age=0, must-revalidate", "Vary": "Authorization, Cookie" });
   }
   c.set("userId", payload.sub);
   c.set("role", payload.role);
@@ -199,7 +200,7 @@ authRoutes.use("/api/auth/me", async (c, next) => {
   await next();
 });
 
-authRoutes.get("/api/auth/me", async (c) => {
+authRoutes.get("/api/auth/session", async (c) => {
   const userId = c.get("userId") as string;
   const role = c.get("role") as string || "user";
   const method = c.get("method") as string || "unknown";
@@ -220,8 +221,6 @@ authRoutes.get("/api/auth/me", async (c) => {
 
   return c.json({ authenticated: true, role, method, pubkey, username });
 });
-
-// ─── Change password (admin) ──────────────────────────────────────────────
 authRoutes.use("/api/auth/change-password", authMiddleware);
 authRoutes.use("/api/auth/change-password", adminMiddleware);
 

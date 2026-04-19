@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 
 const COOKIE_NAME = "0xrss-token";
-const PUBLIC_PATHS = ["/login", "/setup", "/api/auth/login", "/api/auth/setup", "/api/auth/check-setup", "/api/auth/me"];
+const PUBLIC_PATHS = ["/login", "/setup", "/api/auth/login", "/api/auth/setup", "/api/auth/check-setup", "/api/auth/session"];
 
 // API routes that are public (read-only) even without auth
 const PUBLIC_API_READ = [
