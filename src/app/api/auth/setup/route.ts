@@ -34,6 +34,6 @@ export async function POST(request: NextRequest) {
   }).run();
 
   const token = await signToken(id);
-  const response = NextResponse.json({ success: true });
+  const response = NextResponse.json({ success: true, token, role: "admin" });
   return setTokenCookie(response, token);
 }

@@ -22,6 +22,10 @@ database_id = "3b86299e-f7e9-4141-91fe-ab1182d416a6"
 # Migrations directory for D1 (drizzle generates here)
 migrations_dir = "drizzle"
 
+# Environment variables (available at runtime in the worker)
+[vars]
+NEXT_PUBLIC_API_URL = "https://api.rss.moikapy.dev"
+
 # Cron Triggers for automatic feed refreshing
 [triggers]
 crons = ["*/30 * * * *"]
