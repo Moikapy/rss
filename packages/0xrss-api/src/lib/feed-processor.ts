@@ -66,14 +66,14 @@ export async function fetchAndParseFeed(feedUrl: string): Promise<ParsedFeed> {
 function parseJsonFeed(text: string): ParsedFeed {
   const data = JSON.parse(text);
   return {
-    title: data.title || "Untitled Feed",
+    title: stripHtmlTags(decodeHTMLEntities(data.title || "Untitled Feed")),
     siteUrl: data.home_page_url || null,
-    description: data.description || null,
+    description: data.description ? stripHtmlTags(decodeHTMLEntities(data.description)) : null,
     items: (data.items || []).map((item: any) => ({
-      title: item.title || "Untitled",
+      title: stripHtmlTags(decodeHTMLEntities(item.title || "Untitled")),
       url: item.url || "",
       author: item.author?.name || null,
-      summary: item.summary || null,
+      summary: item.summary ? stripHtmlTags(decodeHTMLEntities(item.summary)) : null,
       content: item.content_html || item.content_text || null,
       publishedAt: item.date_published ? new Date(item.date_published) : new Date(),
     })),
@@ -84,7 +84,7 @@ function parseJsonFeed(text: string): ParsedFeed {
 
 function parseXmlFeed(text: string): ParsedFeed {
   const feed: ParsedFeed = {
-    title: extractText(text, "title") || "Untitled Feed",
+    title: stripHtmlTags(decodeHTMLEntities(extractText(text, "title"))) || "Untitled Feed",
     siteUrl:
       extractAlternateLink(text) ||
       extractAttr(text, "link", "href") ||
@@ -108,7 +108,7 @@ function parseXmlFeed(text: string): ParsedFeed {
       "";
 
     const article: ParsedArticle = {
-      title: extractText(itemXml, "title") || "Untitled",
+      title: stripHtmlTags(decodeHTMLEntities(extractText(itemXml, "title"))) || "Untitled",
       url,
       author:
         extractText(itemXml, "author > name") ||
@@ -293,7 +293,7 @@ function extractText(xml: string, tag: string): string | null {
 /** Decode common HTML entities found in RSS/Atom feeds */
 function decodeHTMLEntities(str: string): string {
   return str
-    // Named entities
+    // Named entities (process &amp; FIRST to avoid double-decoding)
     .replace(/&amp;/g, "&")
     .replace(/&lt;/g, "<")
     .replace(/&gt;/g, ">")
@@ -303,6 +303,11 @@ function decodeHTMLEntities(str: string): string {
     .replace(/&#(\d+);/g, (_, code) => String.fromCodePoint(parseInt(code, 10)))
     // Numeric entities (hex) &#x2019; → '
     .replace(/&#x([0-9a-fA-F]+);/g, (_, code) => String.fromCodePoint(parseInt(code, 16)));
+}
+
+/** Strip HTML tags from a string — some RSS feeds put HTML in title/summary fields */
+function stripHtmlTags(str: string): string {
+  return str.replace(/<[^\u003e]*>/g, "").trim();
 }
 
 function extractAttr(xml: string, tag: string, attr: string): string | null {
