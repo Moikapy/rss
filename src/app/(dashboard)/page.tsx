@@ -64,7 +64,7 @@ export default function DashboardPage() {
   const [editingFeedId, setEditingFeedId] = useState<string | null>(null);
   const { authenticated } = useAuth();
   const articleState = useLocalArticleState();
-  const { refreshing, lastRefresh, totalNewArticles, refreshAll } = useAutoRefresh(5 * 60 * 1000);
+  const { refreshing, lastRefresh, feedsProcessed, totalNewArticles, skipped, refreshAll } = useAutoRefresh(5 * 60 * 1000);
 
   // Dashboard works for everyone — feeds are public
   // Auth is only needed for admin actions (add/edit/delete/feeds, chat)
@@ -234,7 +234,7 @@ export default function DashboardPage() {
           )}
         </div>
 
-        <StatusBar refreshing={refreshing} lastRefresh={lastRefresh} onRefresh={refreshAll} />
+        <StatusBar refreshing={refreshing} lastRefresh={lastRefresh} onRefresh={refreshAll} feedsProcessed={feedsProcessed} totalNewArticles={totalNewArticles} skipped={skipped} />
 
         {/* Mobile chat sheet */}
         <Sheet open={chatOpen && isMobile} onOpenChange={setChatOpen}>
@@ -331,7 +331,7 @@ export default function DashboardPage() {
           )}
         </ResizablePanelGroup>
       </div>
-      <StatusBar refreshing={refreshing} lastRefresh={lastRefresh} onRefresh={refreshAll} />
+      <StatusBar refreshing={refreshing} lastRefresh={lastRefresh} onRefresh={refreshAll} feedsProcessed={feedsProcessed} totalNewArticles={totalNewArticles} skipped={skipped} />
 
       {/* Feed edit dialog — rendered at page level to avoid Sheet/Dialog portal conflicts */}
       {authenticated && (

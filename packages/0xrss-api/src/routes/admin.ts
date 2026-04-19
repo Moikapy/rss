@@ -3,6 +3,7 @@ import type { Bindings, Variables } from "../types";
 import { authMiddleware, adminMiddleware } from "../middleware/auth";
 import { createDb } from "../db/client";
 import { feeds, articles, folders, tags, feedTags } from "../db/schema";
+import { refreshFeedsInline } from "../lib/feed-processor";
 import { eq, desc, and, sql } from "drizzle-orm";
 import { invalidateCache } from "../middleware/cache";
 
@@ -415,23 +416,17 @@ adminRoutes.get("/api/admin/stats/unread-counts", async (c) => {
 
 // ─── Cron trigger ──────────────────────────────────────────────────────────
 adminRoutes.post("/api/admin/fetch-feeds", async (c) => {
-  const db = createDb(c.env.DB);
-  const allFeeds = await db.select().from(feeds).all();
-  const feedIds: string[] = [];
-  for (const feed of allFeeds) {
-    if (!feed.autoRefresh) continue;
-    feedIds.push(feed.id);
+  // Process feeds inline with ETag caching — immediate feedback, no queue needed
+  try {
+    const result = await refreshFeedsInline(c.env);
+    return c.json({
+      success: true,
+      feedsProcessed: result.feedsProcessed,
+      totalNewArticles: result.totalNewArticles,
+      skipped: result.skipped,
+      errors: result.errors.length > 0 ? result.errors : undefined,
+    });
+  } catch (err: any) {
+    return c.json({ success: false, error: err.message }, 500);
   }
-  // Send all feed IDs in a single queue message to avoid daily write limits
-  if (feedIds.length > 0) {
-    try {
-      await c.env.FEED_QUEUE.send({ feedIds });
-    } catch (err: any) {
-      if (err.message?.includes("daily write operations limit")) {
-        return c.json({ success: false, error: "Queue daily limit reached. Feeds will refresh automatically on the next scheduled run.", feedsQueued: 0 }, 429);
-      }
-      throw err;
-    }
-  }
-  return c.json({ success: true, feedsQueued: feedIds.length });
 });

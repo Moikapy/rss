@@ -4,16 +4,24 @@ interface StatusBarProps {
   refreshing: boolean;
   lastRefresh: Date | null;
   onRefresh: () => void;
+  feedsProcessed?: number;
+  totalNewArticles?: number;
+  skipped?: number;
 }
 
-export function StatusBar({ refreshing, lastRefresh, onRefresh }: StatusBarProps) {
+export function StatusBar({ refreshing, lastRefresh, onRefresh, feedsProcessed, totalNewArticles, skipped }: StatusBarProps) {
   const timeAgo = lastRefresh ? getTimeAgo(lastRefresh) : "Never";
+
+  const statusText = refreshing
+    ? "⟳ Refreshing feeds..."
+    : lastRefresh && feedsProcessed !== undefined
+      ? `${feedsProcessed} feeds refreshed${totalNewArticles ? `, ${totalNewArticles} new articles` : ""}${skipped ? `, ${skipped} unchanged` : ""}`
+      : `Last updated ${timeAgo}`;
 
   return (
     <footer className="flex h-7 items-center justify-between border-t px-4 text-xs text-muted-foreground">
       <div className="flex items-center gap-2">
-        {refreshing && <span className="animate-pulse">⟳ Refreshing feeds...</span>}
-        {!refreshing && <span>Last updated {timeAgo}</span>}
+        {refreshing ? <span className="animate-pulse">{statusText}</span> : <span>{statusText}</span>}
       </div>
       <button
         onClick={onRefresh}

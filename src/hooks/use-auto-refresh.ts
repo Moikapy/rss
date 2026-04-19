@@ -8,6 +8,7 @@ interface RefreshState {
   lastRefresh: Date | null;
   feedsProcessed: number;
   totalNewArticles: number;
+  skipped: number;
 }
 
 export function useAutoRefresh(intervalMs: number = 5 * 60 * 1000) {
@@ -16,6 +17,7 @@ export function useAutoRefresh(intervalMs: number = 5 * 60 * 1000) {
     lastRefresh: null,
     feedsProcessed: 0,
     totalNewArticles: 0,
+    skipped: 0,
   });
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const mountedRef = useRef(true);
@@ -27,21 +29,29 @@ export function useAutoRefresh(intervalMs: number = 5 * 60 * 1000) {
         method: "POST",
         headers: { ...authHeaders() },
       });
-      const data: { feedsQueued?: number; feedsProcessed?: number; totalNewArticles?: number; error?: string; message?: string } = await res.json();
-      if (!res.ok) {
-        // Queue limit reached — show friendly message instead of crashing
-        console.warn("Feed refresh queued:", data.error || data.message);
+      const data: {
+        success?: boolean;
+        feedsProcessed?: number;
+        totalNewArticles?: number;
+        skipped?: number;
+        error?: string;
+      } = await res.json();
+
+      if (!res.ok || !data.success) {
+        console.warn("Feed refresh failed:", data.error || "Unknown error");
         if (mountedRef.current) {
           setState((prev) => ({ ...prev, refreshing: false }));
         }
         return;
       }
+
       if (mountedRef.current) {
         setState({
           refreshing: false,
           lastRefresh: new Date(),
-          feedsProcessed: data.feedsQueued ?? data.feedsProcessed ?? 0,
+          feedsProcessed: data.feedsProcessed ?? 0,
           totalNewArticles: data.totalNewArticles ?? 0,
+          skipped: data.skipped ?? 0,
         });
       }
     } catch {

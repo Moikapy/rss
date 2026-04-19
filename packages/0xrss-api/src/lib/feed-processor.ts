@@ -32,18 +32,74 @@ export interface FeedResult {
   feedTitle: string;
   newArticles: number;
   errors: string[];
+  skipped?: boolean; // true if feed was not modified (ETag/Last-Modified)
 }
 
-// ─── Fetch + Parse ─────────────────────────────────────────────────────────
+// ─── KV helpers for ETag/conditional caching ───────────────────────────────
 
-export async function fetchAndParseFeed(feedUrl: string): Promise<ParsedFeed> {
+function etagCacheKey(feedId: string): string {
+  return `feed:etag:${feedId}`;
+}
+
+async function getCachedEtags(env: Bindings, feedIds: string[]): Promise<Map<string, { etag?: string; lastModified?: string }>> {
+  const map = new Map<string, { etag?: string; lastModified?: string }>();
+  // KV list is not available in all contexts, so we get keys individually
+  const results = await Promise.all(
+    feedIds.map(async (id) => {
+      try {
+        const raw = await env.CACHE.get(etagCacheKey(id));
+        if (raw) return { id, ...JSON.parse(raw) };
+      } catch { /* ignore */ }
+      return null;
+    })
+  );
+  for (const r of results) {
+    if (r) map.set(r.id, { etag: r.etag, lastModified: r.lastModified });
+  }
+  return map;
+}
+
+async function cacheEtag(env: Bindings, feedId: string, etag?: string, lastModified?: string): Promise<void> {
+  if (!etag && !lastModified) return;
+  await env.CACHE.put(etagCacheKey(feedId), JSON.stringify({ etag, lastModified }), { expirationTtl: 86400 * 7 }); // 7 day TTL
+}
+
+// ─── Fetch + Parse (with ETag/conditional support) ────────────────────────
+
+export interface FeedFetchOptions {
+  etag?: string;
+  lastModified?: string;
+}
+
+export interface FetchAndParseResult {
+  parsed: ParsedFeed;
+  etag?: string;
+  lastModified?: string;
+  notModified: boolean;
+}
+
+export async function fetchAndParseFeed(
+  feedUrl: string,
+  options?: FeedFetchOptions,
+): Promise<FetchAndParseResult> {
+  const headers: Record<string, string> = {
+    "User-Agent": "0xRSS/1.0 (Feed Reader; https://rss.moikapy.dev)",
+    Accept: "application/rss+xml, application/atom+xml, application/feed+json, application/xml, text/xml, */*",
+  };
+
+  // Conditional request — skip download if feed hasn't changed
+  if (options?.etag) headers["If-None-Match"] = options.etag;
+  if (options?.lastModified) headers["If-Modified-Since"] = options.lastModified;
+
   const response = await fetch(feedUrl, {
-    headers: {
-      "User-Agent": "0xRSS/1.0 (Feed Reader; https://rss.moikapy.dev)",
-      Accept: "application/rss+xml, application/atom+xml, application/feed+json, application/xml, text/xml, */*",
-    },
+    headers,
     signal: AbortSignal.timeout(15000),
   });
+
+  // 304 Not Modified — feed hasn't changed, no need to re-parse
+  if (response.status === 304) {
+    return { parsed: { title: "", siteUrl: null, description: null, items: [] }, notModified: true };
+  }
 
   if (!response.ok) {
     throw new Error(`HTTP ${response.status} fetching ${feedUrl}`);
@@ -52,13 +108,19 @@ export async function fetchAndParseFeed(feedUrl: string): Promise<ParsedFeed> {
   const contentType = response.headers.get("content-type") || "";
   const text = await response.text();
 
-  // JSON Feed
+  let parsed: ParsedFeed;
   if (contentType.includes("json") || text.trim().startsWith("{")) {
-    return parseJsonFeed(text);
+    parsed = parseJsonFeed(text);
+  } else {
+    parsed = parseXmlFeed(text);
   }
 
-  // RSS or Atom (XML)
-  return parseXmlFeed(text);
+  return {
+    parsed,
+    etag: response.headers.get("etag") || undefined,
+    lastModified: response.headers.get("last-modified") || undefined,
+    notModified: false,
+  };
 }
 
 // ─── JSON Feed ──────────────────────────────────────────────────────────────
@@ -178,7 +240,7 @@ function sanitizeHtml(html: string): string {
     .replace(/javascript:/gi, ""));
 }
 
-// ─── Feed Processing (queue handler) ───────────────────────────────────────
+// ─── Feed Processing (with ETag caching) ─────────────────────────────────────
 
 export async function processFeed(feedId: string, env: Bindings): Promise<FeedResult> {
   const db = createDb(env.DB);
@@ -197,7 +259,31 @@ export async function processFeed(feedId: string, env: Bindings): Promise<FeedRe
   }
 
   try {
-    const parsed = await fetchAndParseFeed(feed.url);
+    // Check KV for cached ETag/Last-Modified
+    let cachedEtag: string | undefined;
+    let cachedLastModified: string | undefined;
+    try {
+      const raw = await env.CACHE.get(etagCacheKey(feedId));
+      if (raw) {
+        const cached = JSON.parse(raw);
+        cachedEtag = cached.etag;
+        cachedLastModified = cached.lastModified;
+      }
+    } catch { /* ignore cache read errors */ }
+
+    const { parsed, etag, lastModified, notModified } = await fetchAndParseFeed(feed.url, {
+      etag: cachedEtag,
+      lastModified: cachedLastModified,
+    });
+
+    // Feed not modified — skip entirely
+    if (notModified) {
+      console.log(`Feed ${feedId}: not modified (304), skipping`);
+      return { feedId, feedTitle: feed.title, newArticles: 0, errors: [], skipped: true };
+    }
+
+    // Cache the new ETag/Last-Modified for next time
+    await cacheEtag(env, feedId, etag, lastModified);
 
     // Update feed metadata
     await db.update(feeds)
@@ -211,16 +297,18 @@ export async function processFeed(feedId: string, env: Bindings): Promise<FeedRe
       .where(eq(feeds.id, feedId))
       .run();
 
-    // Process articles
+    // Process articles — pre-fetch all existing URLs to avoid O(n) queries
+    const existingUrls = new Set(
+      (await db.select({ url: articles.url })
+        .from(articles)
+        .where(eq(articles.feedId, feedId))
+        .all()).map((r: any) => r.url)
+    );
+
     for (const item of parsed.items) {
       try {
-        // Check for duplicate using the (feedId, url) unique index
-        const existing = await db.select({ id: articles.id })
-          .from(articles)
-          .where(and(eq(articles.feedId, feedId), eq(articles.url, item.url)))
-          .get();
-
-        if (existing) continue;
+        // Check for duplicate using pre-fetched URL set
+        if (existingUrls.has(item.url)) continue;
 
         // Use content from feed first, then try full extraction
         let content = item.content;
@@ -234,7 +322,6 @@ export async function processFeed(feedId: string, env: Bindings): Promise<FeedRe
 
         // If still no content, use summary as fallback
         if (!content && item.summary) {
-          // Wrap summary in a paragraph if it's plain text
           content = item.summary.includes("<") ? item.summary : `<p>${item.summary}</p>`;
         }
 
@@ -254,6 +341,7 @@ export async function processFeed(feedId: string, env: Bindings): Promise<FeedRe
         }).run();
 
         result.newArticles++;
+        existingUrls.add(item.url); // Track inserted URLs to avoid retrying
       } catch (err: any) {
         // Ignore unique constraint violations (race condition on duplicate)
         if (err.message?.includes("UNIQUE") || err.message?.includes("ConstraintError")) continue;
@@ -270,6 +358,59 @@ export async function processFeed(feedId: string, env: Bindings): Promise<FeedRe
   }
 
   return result;
+}
+
+// ─── Inline Batch Refresh (for manual "Refresh all") ───────────────────────
+
+/**
+ * Process feeds inline with ETag caching and concurrency control.
+ * Used by the "Refresh all" button for immediate feedback.
+ * Returns results as they complete — caller can stream or aggregate.
+ */
+export async function refreshFeedsInline(
+  env: Bindings,
+): Promise<{ feedsProcessed: number; totalNewArticles: number; errors: string[]; skipped: number }> {
+  const db = createDb(env.DB);
+  const allFeeds = await db.select().from(feeds).all();
+  const activeFeeds = allFeeds.filter((f) => f.autoRefresh);
+
+  // Get cached ETags in batch
+  const etagMap = await getCachedEtags(env, activeFeeds.map((f) => f.id));
+
+  let feedsProcessed = 0;
+  let totalNewArticles = 0;
+  let skipped = 0;
+  const errors: string[] = [];
+
+  // Process feeds concurrently (max 5 at a time to avoid D1 concurrency limits)
+  const CONCURRENCY = 5;
+  for (let i = 0; i < activeFeeds.length; i += CONCURRENCY) {
+    const batch = activeFeeds.slice(i, i + CONCURRENCY);
+    const results = await Promise.allSettled(
+      batch.map((feed) =>
+        processFeed(feed.id, env).catch((err) => ({
+          feedId: feed.id,
+          feedTitle: feed.title,
+          newArticles: 0,
+          errors: [err.message],
+          skipped: false,
+        }))
+      ),
+    );
+
+    for (const r of results) {
+      if (r.status === "fulfilled") {
+        feedsProcessed++;
+        totalNewArticles += r.value.newArticles;
+        if (r.value.skipped) skipped++;
+        errors.push(...r.value.errors);
+      } else {
+        errors.push(r.reason?.message || "Unknown error");
+      }
+    }
+  }
+
+  return { feedsProcessed, totalNewArticles, errors, skipped };
 }
 
 // ─── XML Helpers ───────────────────────────────────────────────────────────
