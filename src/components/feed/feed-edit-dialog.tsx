@@ -1,4 +1,5 @@
 "use client";
+import { apiFetch, adminUrl, publicFetch } from "@/lib/api/client";
 
 import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
@@ -59,6 +60,8 @@ export function FeedEditDialog({
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [retryKey, setRetryKey] = useState(0);
 
   // Form state
   const [title, setTitle] = useState("");
@@ -69,12 +72,15 @@ export function FeedEditDialog({
   useEffect(() => {
     if (!feedId || !open) return;
 
+    setLoading(true);
+    setError("");
+
     // Load feed data, folders, tags
     Promise.all([
-      fetch(`/api/feeds/${feedId}`).then((r) => r.json() as Promise<any>),
-      fetch("/api/folders").then((r) => r.json() as Promise<Folder[]>),
-      fetch("/api/tags").then((r) => r.json() as Promise<Tag[]>),
-      fetch(`/api/feeds/${feedId}/tags`).then((r) => r.json() as Promise<{ tagId: string }[]>),
+      apiFetch<any>(adminUrl(`/feeds/${feedId}`)),
+      publicFetch<Folder[]>("/folders"),
+      publicFetch<Tag[]>("/tags"),
+      apiFetch<{ tagId: string }[]>(adminUrl(`/feeds/${feedId}/tags`)),
     ]).then(([feedData, foldersData, tagsData, feedTagsData]) => {
       setFeed(feedData);
       setTitle(feedData.title || "");
@@ -84,8 +90,12 @@ export function FeedEditDialog({
       setFolders(foldersData);
       setTags(tagsData);
       setSelectedTagIds(new Set(feedTagsData.map((t: any) => t.tagId)));
+    }).catch((err) => {
+      setError(err instanceof Error ? err.message : "Failed to load feed data");
+    }).finally(() => {
+      setLoading(false);
     });
-  }, [feedId, open]);
+  }, [feedId, open, retryKey]);
 
   async function handleSave() {
     if (!feedId) return;
@@ -93,9 +103,8 @@ export function FeedEditDialog({
     setError("");
 
     try {
-      const res = await fetch(`/api/feeds/${feedId}`, {
+      const updated = await apiFetch<any>(adminUrl(`/feeds/${feedId}`), {
         method: "PATCH",
-        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           title,
           folderId: folderId || null,
@@ -105,16 +114,16 @@ export function FeedEditDialog({
         }),
       });
 
-      if (!res.ok) {
-        const data = (await res.json()) as { error?: string };
-        setError(data.error || "Failed to update feed");
-        return;
+      // Update local feed state with response
+      if (updated) {
+        setFeed(updated);
+        setTitle(updated.title || title);
       }
 
       onUpdated?.();
       onOpenChange(false);
-    } catch {
-      setError("Failed to update feed");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to update feed");
     } finally {
       setSaving(false);
     }
@@ -126,11 +135,11 @@ export function FeedEditDialog({
 
     setDeleting(true);
     try {
-      await fetch(`/api/feeds/${feedId}`, { method: "DELETE" });
+      await apiFetch(adminUrl(`/feeds/${feedId}`), { method: "DELETE" });
       onDeleted?.();
       onOpenChange(false);
-    } catch {
-      setError("Failed to delete feed");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to delete feed");
     } finally {
       setDeleting(false);
     }
@@ -139,12 +148,10 @@ export function FeedEditDialog({
   async function handleCreateTag() {
     if (!newTagName.trim()) return;
     try {
-      const res = await fetch("/api/tags", {
+      const data = await apiFetch<{ id?: string; error?: string }>(adminUrl("/tags"), {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name: newTagName.trim() }),
       });
-      const data = (await res.json()) as { id?: string; error?: string };
       if (data.id) {
         setTags((prev) => [...prev, { id: data.id!, name: newTagName.trim() }]);
         setSelectedTagIds((prev) => new Set([...prev, data.id!]));
@@ -185,7 +192,18 @@ export function FeedEditDialog({
           </DialogDescription>
         </DialogHeader>
 
-        {feed && (
+        {loading && (
+          <div className="py-8 text-center text-sm text-muted-foreground">Loading...</div>
+        )}
+
+        {error && !loading && (
+          <div className="space-y-3 py-2">
+            <p className="text-sm text-destructive">{error}</p>
+            <Button variant="outline" size="sm" onClick={() => { setError(""); setRetryKey(k => k + 1); }}>Retry</Button>
+          </div>
+        )}
+
+        {!loading && !error && feed && (
           <div className="space-y-4 py-2">
             {/* Title */}
             <div className="space-y-2">
