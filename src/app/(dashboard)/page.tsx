@@ -55,7 +55,7 @@ export default function DashboardPage() {
   const [layout, setLayout] = useState<LayoutMap | undefined>(undefined);
   const [sidebarVisible, setSidebarVisible] = useState(true);
   const [articleVersion, setArticleVersion] = useState(0);
-  const [sidebarVersion, setSidebarVersion] = useState(0);
+  const [sidebarRefreshKey, setSidebarRefreshKey] = useState(0);
   const [articles, setArticles] = useState<any[]>([]);
   const [mobileView, setMobileView] = useState<MobileView>("list");
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -183,7 +183,7 @@ export default function DashboardPage() {
         <Sheet open={sidebarOpen} onOpenChange={setSidebarOpen}>
           <SheetContent side="left" className="w-[280px] p-0">
             <Sidebar
-              key={`sidebar-${sidebarVersion}`}
+              refreshKey={sidebarRefreshKey}
               selectedFeedId={selectedFeedId}
               selectedFolderId={selectedFolderId}
               selectedTagId={selectedTagId}
@@ -272,7 +272,7 @@ export default function DashboardPage() {
                 collapsible
               >
                 <Sidebar
-                  key={`sidebar-${sidebarVersion}`}
+                  refreshKey={sidebarRefreshKey}
                   selectedFeedId={selectedFeedId}
                   selectedFolderId={selectedFolderId}
                   selectedTagId={selectedTagId}
@@ -339,8 +339,8 @@ export default function DashboardPage() {
           feedId={editingFeedId}
           open={editingFeedId !== null}
           onOpenChange={(open) => { if (!open) setEditingFeedId(null); }}
-          onUpdated={() => { setEditingFeedId(null); setSidebarVersion(v => v + 1); }}
-          onDeleted={() => { setEditingFeedId(null); setSidebarVersion(v => v + 1); }}
+          onUpdated={() => { setEditingFeedId(null); setSidebarRefreshKey(v => v + 1); }}
+          onDeleted={() => { setEditingFeedId(null); setSidebarRefreshKey(v => v + 1); }}
         />
       )}
     </div>

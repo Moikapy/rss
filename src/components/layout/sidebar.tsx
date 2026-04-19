@@ -39,6 +39,8 @@ interface SidebarProps {
   onSelectTag: (tagId: string) => void;
   onFilterChange: (filter: "all" | "unread" | "bookmarked" | "read-later") => void;
   onEditFeed?: (feedId: string) => void;
+  refreshKey?: number;
+  onFeedChanged?: () => void;
   isAuthenticated?: boolean;
 }
 
@@ -52,6 +54,8 @@ export function Sidebar({
   onSelectTag,
   onFilterChange,
   onEditFeed,
+  onFeedChanged,
+  refreshKey = 0,
   isAuthenticated = true,
 }: SidebarProps) {
   const [folders, setFolders] = useState<FolderItem[]>([]);
@@ -71,12 +75,14 @@ export function Sidebar({
 
   useEffect(() => {
     loadData();
+  }, [refreshKey]);
+
+  useEffect(() => {
+    loadData();
   }, []);
 
   async function loadData() {
     try {
-      // Use admin routes when authenticated (always fresh, no CDN cache)
-      // Fall back to public cached routes for anonymous users
       const fetchFeeds = isAuthenticated
         ? apiFetch<any[]>(adminUrl("/feeds"))
         : publicFetch<any[]>("/feeds");
@@ -93,13 +99,12 @@ export function Sidebar({
         fetchTags,
       ]);
 
-      // Unread counts are admin-only (require auth), so use admin route if logged in
       let unreadCounts: Record<string, number> = {};
       if (isAuthenticated) {
         try {
           unreadCounts = await apiFetch<Record<string, number>>(adminUrl("/stats/unread-counts"));
         } catch {
-          // Not authenticated — no unread counts, that's fine
+          // Not authenticated — no unread counts
         }
       }
 
@@ -143,14 +148,19 @@ export function Sidebar({
     }
   }
 
+  /**
+   * Silently refresh data in the background (no loading flash).
+   * Used after optimistic updates to sync with server state.
+   */
+  function backgroundRefresh() {
+    loadData(); // state updates are non-blocking — no visual flash
+  }
+
   function toggleFolder(folderId: string) {
     setExpandedFolders((prev) => {
       const next = new Set(prev);
-      if (next.has(folderId)) {
-        next.delete(folderId);
-      } else {
-        next.add(folderId);
-      }
+      if (next.has(folderId)) next.delete(folderId);
+      else next.add(folderId);
       return next;
     });
   }
@@ -160,7 +170,6 @@ export function Sidebar({
       setCopiedFeedId(feedId);
       setTimeout(() => setCopiedFeedId(null), 2000);
     }).catch(() => {
-      // Fallback
       const temp = document.createElement("input");
       temp.value = url;
       document.body.appendChild(temp);
@@ -172,58 +181,126 @@ export function Sidebar({
     });
   }
 
+  // ─── Optimistic mutations ─────────────────────────────────────
+
   async function createFolder() {
     if (!newFolderName.trim()) return;
+    const name = newFolderName.trim();
+    setNewFolderName("");
+    setCreatingFolder(false);
+
+    // Optimistic: add to local state immediately
+    const tempId = `temp-${Date.now()}`;
+    setFolders((prev) => [...prev, { id: tempId, name, order: prev.length, feeds: [] }]);
+    setExpandedFolders((prev) => new Set([...prev, tempId]));
+
     try {
-      await apiFetch(adminUrl("/folders"), {
+      const result = await apiFetch<{ id: string; success: boolean }>(adminUrl("/folders"), {
         method: "POST",
-        body: JSON.stringify({ name: newFolderName.trim() }),
+        body: JSON.stringify({ name }),
       });
-      setNewFolderName("");
-      setCreatingFolder(false);
-      loadData();
+      // Replace temp ID with real ID
+      if (result.id) {
+        setFolders((prev) => prev.map((f) => f.id === tempId ? { ...f, id: result.id } : f));
+        setExpandedFolders((prev) => {
+          const next = new Set(prev);
+          next.delete(tempId);
+          next.add(result.id);
+          return next;
+        });
+      }
     } catch {
-      // ignore
+      // Rollback on error
+      setFolders((prev) => prev.filter((f) => f.id !== tempId));
+      setExpandedFolders((prev) => { const next = new Set(prev); next.delete(tempId); return next; });
     }
   }
 
   async function createTag() {
     if (!newTagName.trim()) return;
+    const name = newTagName.trim();
+    setNewTagName("");
+    setCreatingTag(false);
+
+    // Optimistic
+    const tempId = `temp-tag-${Date.now()}`;
+    setTags((prev) => [...prev, { id: tempId, name }]);
+
     try {
-      await apiFetch(adminUrl("/tags"), {
+      const result = await apiFetch<{ id: string; success: boolean }>(adminUrl("/tags"), {
         method: "POST",
-        body: JSON.stringify({ name: newTagName.trim() }),
+        body: JSON.stringify({ name }),
       });
-      setNewTagName("");
-      setCreatingTag(false);
-      loadData();
+      if (result.id) {
+        setTags((prev) => prev.map((t) => t.id === tempId ? { ...t, id: result.id } : t));
+      }
     } catch {
-      // ignore
+      // Rollback
+      setTags((prev) => prev.filter((t) => t.id !== tempId));
     }
   }
 
   async function deleteTag(tagId: string) {
+    const tag = tags.find((t) => t.id === tagId);
+    if (!tag) return;
+
+    // Optimistic: remove immediately
+    setTags((prev) => prev.filter((t) => t.id !== tagId));
+    if (selectedTagId === tagId) onSelectTag("");
+
     try {
       await apiFetch(adminUrl(`/tags/${tagId}`), { method: "DELETE" });
-      loadData();
     } catch {
-      // ignore
+      // Rollback — re-add the tag
+      setTags((prev) => [...prev, tag].sort((a, b) => a.name.localeCompare(b.name)));
     }
   }
 
   async function renameTag(tagId: string) {
     if (!editingTagName.trim()) return;
+    const newName = editingTagName.trim();
+    const oldName = tags.find((t) => t.id === tagId)?.name || "";
+
+    // Optimistic: update name immediately
+    setTags((prev) => prev.map((t) => t.id === tagId ? { ...t, name: newName } : t));
+    setEditingTagId(null);
+    setEditingTagName("");
+
     try {
       await apiFetch(adminUrl(`/tags/${tagId}`), {
         method: "PATCH",
-        body: JSON.stringify({ name: editingTagName.trim() }),
+        body: JSON.stringify({ name: newName }),
       });
-      setEditingTagId(null);
-      setEditingTagName("");
-      loadData();
     } catch {
-      // ignore
+      // Rollback
+      setTags((prev) => prev.map((t) => t.id === tagId ? { ...t, name: oldName } : t));
     }
+  }
+
+  /**
+   * Update a feed in local state (called after feed edit dialog saves).
+   * No re-fetch needed — just swap the changed feed in-place.
+   */
+  function updateFeedLocal(feedId: string, updates: Record<string, any>) {
+    setFolders((prev) => prev.map((folder) => ({
+      ...folder,
+      feeds: folder.feeds.map((feed) =>
+        feed.id === feedId ? { ...feed, ...updates } : feed
+      ),
+    })));
+    setUncategorizedFeeds((prev) => prev.map((feed) =>
+      feed.id === feedId ? { ...feed, ...updates } : feed
+    ));
+
+    // If folderId changed, move the feed between lists
+    if ("folderId" in updates) {
+      // Background refresh to get the correct folder assignments
+      // (too complex to reshuffle locally — but the optimistic update
+      //  already shows the title/folder name change instantly)
+      backgroundRefresh();
+    }
+
+    onFeedChanged?.();
   }
 
   const filters = [
@@ -256,7 +333,7 @@ export function Sidebar({
 
       <ScrollArea className="flex-1">
         <div className="p-2">
-          {/* Folders section */}
+          {/* Categories section */}
           <div className="flex items-center justify-between px-2 py-1">
             <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Categories</span>
             {isAuthenticated && (
@@ -327,7 +404,7 @@ export function Sidebar({
                       <button
                         onClick={() => onSelectFeed(feed.id)}
                         className={cn(
-                          "flex flex-1 items-center  gap-1.5 rounded-md px-2 py-1.5 text-sm text-left hover:bg-muted transition-colors",
+                          "flex flex-1 items-center gap-1.5 rounded-md px-2 py-1.5 text-sm text-left hover:bg-muted transition-colors",
                           selectedFeedId === feed.id && "bg-muted font-medium"
                         )}
                       >
