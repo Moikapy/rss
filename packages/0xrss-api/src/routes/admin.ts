@@ -245,6 +245,15 @@ adminRoutes.post("/api/admin/tags", async (c) => {
   }
 });
 
+adminRoutes.patch("/api/admin/tags/:id", async (c) => {
+  const { name } = await c.req.json();
+  if (!name) return c.json({ error: "Tag name is required" }, 400);
+  const tagId = c.req.param("id");
+  await c.env.DB.prepare("UPDATE tags SET name = ? WHERE id = ?").bind(name, tagId).run();
+  await invalidateCache(c.env, ["/api/public/tags"]);
+  return c.json({ success: true });
+});
+
 adminRoutes.delete("/api/admin/tags/:id", async (c) => {
   const db = createDb(c.env.DB);
   await db.delete(tags).where(eq(tags.id, c.req.param("id"))).run();

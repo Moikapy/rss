@@ -241,14 +241,14 @@ export function FeedEditDialog({
 
             {/* Folder */}
             <div className="space-y-2">
-              <Label htmlFor="feed-folder">Folder</Label>
+              <Label htmlFor="feed-folder">Category</Label>
               <select
                 id="feed-folder"
                 value={folderId}
                 onChange={(e) => setFolderId(e.target.value)}
                 className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
               >
-                <option value="">No folder</option>
+                <option value="">No category</option>
                 {folders.map((folder) => (
                   <option key={folder.id} value={folder.id}>
                     {folder.name}

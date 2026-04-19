@@ -6,7 +6,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Folder, Tag, ChevronRight, ChevronDown, Plus, Rss, X, Settings, Copy, Check } from "lucide-react";
+import { LayoutGrid, Tag, ChevronRight, ChevronDown, Plus, Rss, X, Settings, Copy, Check, Pencil, Trash2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 interface FeedItem {
@@ -60,6 +60,8 @@ export function Sidebar({
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
   const [copiedFeedId, setCopiedFeedId] = useState<string | null>(null);
+  const [editingTagId, setEditingTagId] = useState<string | null>(null);
+  const [editingTagName, setEditingTagName] = useState("");
 
   // Inline creation
   const [creatingFolder, setCreatingFolder] = useState(false);
@@ -200,6 +202,30 @@ export function Sidebar({
     }
   }
 
+  async function deleteTag(tagId: string) {
+    try {
+      await apiFetch(adminUrl(`/tags/${tagId}`), { method: "DELETE" });
+      loadData();
+    } catch {
+      // ignore
+    }
+  }
+
+  async function renameTag(tagId: string) {
+    if (!editingTagName.trim()) return;
+    try {
+      await apiFetch(adminUrl(`/tags/${tagId}`), {
+        method: "PATCH",
+        body: JSON.stringify({ name: editingTagName.trim() }),
+      });
+      setEditingTagId(null);
+      setEditingTagName("");
+      loadData();
+    } catch {
+      // ignore
+    }
+  }
+
   const filters = [
     { key: "all" as const, label: "All" },
     { key: "unread" as const, label: "Unread" },
@@ -232,12 +258,12 @@ export function Sidebar({
         <div className="p-2">
           {/* Folders section */}
           <div className="flex items-center justify-between px-2 py-1">
-            <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Folders</span>
+            <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Categories</span>
             {isAuthenticated && (
               <button
                 onClick={() => setCreatingFolder(true)}
                 className="text-muted-foreground hover:text-foreground transition-colors"
-                title="New folder"
+                title="New category"
               >
                 <Plus className="h-3.5 w-3.5" />
               </button>
@@ -252,7 +278,7 @@ export function Sidebar({
               <Input
                 value={newFolderName}
                 onChange={(e) => setNewFolderName(e.target.value)}
-                placeholder="Folder name"
+                placeholder="Category name"
                 className="h-7 text-xs"
                 autoFocus
                 onBlur={() => { if (!newFolderName.trim()) setCreatingFolder(false); }}
@@ -285,7 +311,7 @@ export function Sidebar({
                 ) : (
                   <ChevronRight className="h-3.5 w-3.5 shrink-0" />
                 )}
-                <Folder className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                <LayoutGrid className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
                 <span className="flex-1 truncate text-left">{folder.name}</span>
                 {folder.feeds.length > 0 && (
                   <Badge variant="secondary" className="h-4 px-1 text-[10px]">
@@ -336,12 +362,12 @@ export function Sidebar({
             </div>
           ))}
 
-          {/* Uncategorized */}
+          {/* No category */}
           {uncategorizedFeeds.length > 0 && (
             <>
               {folders.length > 0 && (
                 <div className="my-1 px-2 py-1 text-[10px] font-medium text-muted-foreground uppercase tracking-wider">
-                  Uncategorized
+                  No category
                 </div>
               )}
               {uncategorizedFeeds.map((feed) => (
@@ -423,17 +449,53 @@ export function Sidebar({
           )}
 
           {tags.map((tag) => (
-            <button
-              key={tag.id}
-              onClick={() => onSelectTag(tag.id)}
-              className={cn(
-                "flex w-full items-center gap-1.5 rounded-md px-2 py-1.5 text-sm hover:bg-muted transition-colors",
-                selectedTagId === tag.id && "bg-muted font-medium"
+            <div key={tag.id} className="group flex items-center">
+              {editingTagId === tag.id ? (
+                <form
+                  onSubmit={(e) => { e.preventDefault(); renameTag(tag.id); }}
+                  className="flex items-center gap-1 flex-1 px-2 py-0.5"
+                >
+                  <Tag className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                  <Input
+                    value={editingTagName}
+                    onChange={(e) => setEditingTagName(e.target.value)}
+                    className="h-6 text-xs flex-1"
+                    autoFocus
+                    onBlur={() => { if (!editingTagName.trim()) { setEditingTagId(null); setEditingTagName(""); } }}
+                  />
+                  <Button type="submit" size="sm" variant="ghost" className="h-6 w-6 p-0 shrink-0">✓</Button>
+                </form>
+              ) : (
+                <button
+                  onClick={() => onSelectTag(tag.id)}
+                  className={cn(
+                    "flex flex-1 items-center gap-1.5 rounded-md px-2 py-1.5 text-sm hover:bg-muted transition-colors",
+                    selectedTagId === tag.id && "bg-muted font-medium"
+                  )}
+                >
+                  <Tag className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                  <span className="flex-1 truncate">{tag.name}</span>
+                </button>
               )}
-            >
-              <Tag className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-              <span className="flex-1 truncate">{tag.name}</span>
-            </button>
+              {isAuthenticated && editingTagId !== tag.id && (
+                <>
+                  <button
+                    onClick={(e) => { e.stopPropagation(); setEditingTagId(tag.id); setEditingTagName(tag.name); }}
+                    className="shrink-0 p-1 opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-foreground transition-opacity"
+                    title="Rename tag"
+                  >
+                    <Pencil className="h-3 w-3" />
+                  </button>
+                  <button
+                    onClick={(e) => { e.stopPropagation(); if (confirm(`Delete tag "${tag.name}"?`)) deleteTag(tag.id); }}
+                    className="shrink-0 p-1 opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-red-500 transition-opacity"
+                    title="Delete tag"
+                  >
+                    <Trash2 className="h-3 w-3" />
+                  </button>
+                </>
+              )}
+            </div>
           ))}
         </div>
       </ScrollArea>
