@@ -6,9 +6,9 @@ import { adminRoutes } from "./routes/admin";
 import { authRoutes } from "./routes/auth";
 import { userRoutes } from "./routes/user";
 import { feeds } from "./db/schema";
-import { eq } from "drizzle-orm";
 import { createDb } from "./db/client";
 import { processFeed } from "./lib/feed-processor";
+
 
 const app = new Hono<{ Bindings: Bindings; Variables: Variables }>();
 
@@ -38,6 +38,7 @@ export default {
     ctx.waitUntil((async () => {
       const db = createDb(env.DB);
       const allFeeds = await db.select().from(feeds).all();
+      const feedIds: string[] = [];
       for (const feed of allFeeds) {
         if (!feed.autoRefresh) continue;
         if (feed.lastFetched) {
@@ -45,22 +46,29 @@ export default {
           const intervalMs = feed.refreshInterval * 60 * 1000;
           if (elapsed < intervalMs) continue;
         }
-        await env.FEED_QUEUE.send({ feedId: feed.id });
+        feedIds.push(feed.id);
+      }
+      // Send all feed IDs in a single queue message to avoid daily write limits
+      if (feedIds.length > 0) {
+        await env.FEED_QUEUE.send({ feedIds });
       }
     })());
   },
 
   queue: async (batch: MessageBatch, env: Bindings) => {
     for (const message of batch.messages) {
-      const { feedId } = message.body as { feedId: string };
-      try {
-        const result = await processFeed(feedId, env);
-        console.log(`Feed ${feedId}: ${result.newArticles} new articles, ${result.errors.length} errors`);
-        message.ack();
-      } catch (err: any) {
-        console.error(`Feed ${feedId} processing failed:`, err.message);
-        message.retry({ delaySeconds: 60 });
+      const body = message.body as { feedId?: string; feedIds?: string[] };
+      // Support both single-feedId (legacy) and batched feedIds messages
+      const ids = body.feedIds || (body.feedId ? [body.feedId] : []);
+      for (const feedId of ids) {
+        try {
+          const result = await processFeed(feedId, env);
+          console.log(`Feed ${feedId}: ${result.newArticles} new articles, ${result.errors.length} errors`);
+        } catch (err: any) {
+          console.error(`Feed ${feedId} processing failed:`, err.message);
+        }
       }
+      message.ack();
     }
   },
 } satisfies ExportedHandler<Bindings>;

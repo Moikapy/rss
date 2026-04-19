@@ -417,11 +417,21 @@ adminRoutes.get("/api/admin/stats/unread-counts", async (c) => {
 adminRoutes.post("/api/admin/fetch-feeds", async (c) => {
   const db = createDb(c.env.DB);
   const allFeeds = await db.select().from(feeds).all();
-  let queued = 0;
+  const feedIds: string[] = [];
   for (const feed of allFeeds) {
     if (!feed.autoRefresh) continue;
-    await c.env.FEED_QUEUE.send({ feedId: feed.id });
-    queued++;
+    feedIds.push(feed.id);
   }
-  return c.json({ success: true, feedsQueued: queued });
+  // Send all feed IDs in a single queue message to avoid daily write limits
+  if (feedIds.length > 0) {
+    try {
+      await c.env.FEED_QUEUE.send({ feedIds });
+    } catch (err: any) {
+      if (err.message?.includes("daily write operations limit")) {
+        return c.json({ success: false, error: "Queue daily limit reached. Feeds will refresh automatically on the next scheduled run.", feedsQueued: 0 }, 429);
+      }
+      throw err;
+    }
+  }
+  return c.json({ success: true, feedsQueued: feedIds.length });
 });

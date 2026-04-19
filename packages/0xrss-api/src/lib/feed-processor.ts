@@ -84,7 +84,7 @@ function parseJsonFeed(text: string): ParsedFeed {
 
 function parseXmlFeed(text: string): ParsedFeed {
   const feed: ParsedFeed = {
-    title: stripHtmlTags(decodeHTMLEntities(extractText(text, "title"))) || "Untitled Feed",
+    title: stripHtmlTags(decodeHTMLEntities(extractText(text, "title") || "")) || "Untitled Feed",
     siteUrl:
       extractAlternateLink(text) ||
       extractAttr(text, "link", "href") ||
@@ -108,7 +108,7 @@ function parseXmlFeed(text: string): ParsedFeed {
       "";
 
     const article: ParsedArticle = {
-      title: stripHtmlTags(decodeHTMLEntities(extractText(itemXml, "title"))) || "Untitled",
+      title: stripHtmlTags(decodeHTMLEntities(extractText(itemXml, "title") || "")) || "Untitled",
       url,
       author:
         extractText(itemXml, "author > name") ||

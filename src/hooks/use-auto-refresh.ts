@@ -1,5 +1,5 @@
 "use client";
-import { apiFetch, adminUrl } from "@/lib/api/client";
+import { adminUrl, authHeaders } from "@/lib/api/client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
@@ -23,12 +23,24 @@ export function useAutoRefresh(intervalMs: number = 5 * 60 * 1000) {
   const refreshAll = useCallback(async () => {
     setState((prev) => ({ ...prev, refreshing: true }));
     try {
-      const data = await apiFetch<{ feedsProcessed?: number; totalNewArticles?: number }>(adminUrl("/fetch-feeds"), { method: "POST" });
+      const res = await fetch(adminUrl("/fetch-feeds"), {
+        method: "POST",
+        headers: { ...authHeaders() },
+      });
+      const data: { feedsQueued?: number; feedsProcessed?: number; totalNewArticles?: number; error?: string; message?: string } = await res.json();
+      if (!res.ok) {
+        // Queue limit reached — show friendly message instead of crashing
+        console.warn("Feed refresh queued:", data.error || data.message);
+        if (mountedRef.current) {
+          setState((prev) => ({ ...prev, refreshing: false }));
+        }
+        return;
+      }
       if (mountedRef.current) {
         setState({
           refreshing: false,
           lastRefresh: new Date(),
-          feedsProcessed: data.feedsProcessed ?? 0,
+          feedsProcessed: data.feedsQueued ?? data.feedsProcessed ?? 0,
           totalNewArticles: data.totalNewArticles ?? 0,
         });
       }
