@@ -44,7 +44,7 @@ describe("authMiddleware (integration)", () => {
       headers: { Authorization: `Bearer ${token}` },
     });
     expect(res.status).toBe(200);
-    const body = await res.json();
+    const body: any = await res.json();
     expect(body.userId).toBe("admin-1");
     expect(body.role).toBe("admin");
   });
@@ -55,7 +55,7 @@ describe("authMiddleware (integration)", () => {
       headers: { Authorization: `Bearer ${token}` },
     });
     expect(res.status).toBe(200);
-    const body = await res.json();
+    const body: any = await res.json();
     expect(body.userId).toBe("user-1");
     expect(body.role).toBe("user");
   });
@@ -104,7 +104,7 @@ describe("public routes (no auth)", () => {
   it("allows unauthenticated access to public routes", async () => {
     const res = await app.request("/api/public/status");
     expect(res.status).toBe(200);
-    const body = await res.json();
+    const body: any = await res.json();
     expect(body.ok).toBe(true);
   });
 });
@@ -118,7 +118,7 @@ describe("cookie-based auth", () => {
       headers: { cookie: `0xrss-token=${token}` },
     });
     expect(res.status).toBe(200);
-    const body = await res.json();
+    const body: any = await res.json();
     expect(body.userId).toBe("user-cookie");
   });
 
