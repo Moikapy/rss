@@ -285,10 +285,9 @@ export async function processFeed(feedId: string, env: Bindings): Promise<FeedRe
     // Cache the new ETag/Last-Modified for next time
     await cacheEtag(env, feedId, etag, lastModified);
 
-    // Update feed metadata
+    // Update feed metadata — only overwrite fields the user hasn't customized
     await db.update(feeds)
       .set({
-        title: parsed.title || feed.title,
         siteUrl: parsed.siteUrl || feed.siteUrl,
         description: parsed.description || feed.description,
         lastFetched: new Date(),

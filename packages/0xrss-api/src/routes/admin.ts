@@ -1,11 +1,18 @@
 import { Hono } from "hono";
 import type { Bindings, Variables } from "../types";
 import { authMiddleware, adminMiddleware } from "../middleware/auth";
-import { createDb } from "../db/client";
-import { feeds, articles, folders, tags, feedTags } from "../db/schema";
-import { refreshFeedsInline } from "../lib/feed-processor";
-import { eq, desc, and, sql } from "drizzle-orm";
 import { invalidateCache } from "../middleware/cache";
+import { createDb } from "../db/client";
+import { feedTags } from "../db/schema";
+import { eq } from "drizzle-orm";
+import {
+  listFeeds, getFeed, createFeed, updateFeed, deleteFeed,
+  listArticles, getArticle, updateArticle, deleteArticle,
+  listFolders, createFolder, updateFolder, deleteFolder,
+  listTags, createTag, updateTag, deleteTag,
+  searchArticles, getUnreadCounts,
+} from "../lib/db-sdk";
+import { refreshFeedsInline } from "../lib/feed-processor";
 
 export const adminRoutes = new Hono<{ Bindings: Bindings; Variables: Variables }>();
 
@@ -13,7 +20,6 @@ export const adminRoutes = new Hono<{ Bindings: Bindings; Variables: Variables }
 adminRoutes.use("/api/admin/*", authMiddleware, adminMiddleware);
 
 // Admin responses must not be cached by Cloudflare CDN
-// Must recreate Response object — c.res.headers.set() doesn't reliably persist
 adminRoutes.use("/api/admin/*", async (c, next) => {
   await next();
   const headers = new Headers(c.res.headers);
@@ -28,37 +34,13 @@ adminRoutes.use("/api/admin/*", async (c, next) => {
 });
 
 // ─── Feeds ─────────────────────────────────────────────────────────────────
-adminRoutes.get("/api/admin/feeds", async (c) => {
-  const db = createDb(c.env.DB);
-  const allFeeds = await db.select().from(feeds).orderBy(desc(feeds.createdAt)).all();
-  return c.json(allFeeds);
-});
+adminRoutes.get("/api/admin/feeds", async (c) => c.json(await listFeeds(c.env)));
 
 adminRoutes.post("/api/admin/feeds", async (c) => {
-  const db = createDb(c.env.DB);
   const { title, url, siteUrl, description, folderId, tagIds } = await c.req.json();
   if (!url) return c.json({ error: "Feed URL is required" }, 400);
-
-  const id = crypto.randomUUID();
-  const now = new Date();
   try {
-    await db.insert(feeds).values({
-      id, title: title || url, url, siteUrl: siteUrl || null,
-      description: description || null, folderId: folderId || null,
-      refreshInterval: 30, autoRefresh: true, lastFetched: null,
-      createdAt: now, updatedAt: now,
-    }).run();
-
-    if (tagIds && Array.isArray(tagIds)) {
-      for (const tagId of tagIds) {
-        await db.insert(feedTags).values({ feedId: id, tagId }).run();
-      }
-    }
-
-    // Invalidate public cache
-    await invalidateCache(c.env, ["/api/public/feeds", "/api/public/articles", "/api/public/folders", "/api/public/tags"]);
-
-    return c.json({ id, success: true }, 201);
+    return c.json(await createFeed(c.env, { title, url, siteUrl, description, folderId, tagIds }), 201);
   } catch (err: any) {
     if (err.message?.includes("UNIQUE")) return c.json({ error: "Feed URL already exists" }, 409);
     return c.json({ error: "Failed to create feed" }, 500);
@@ -66,180 +48,76 @@ adminRoutes.post("/api/admin/feeds", async (c) => {
 });
 
 adminRoutes.get("/api/admin/feeds/:id", async (c) => {
-  const db = createDb(c.env.DB);
-  const feed = await db.select().from(feeds).where(eq(feeds.id, c.req.param("id"))).get();
+  const feed = await getFeed(c.env, c.req.param("id"));
   if (!feed) return c.json({ error: "Feed not found" }, 404);
   return c.json(feed);
 });
 
 adminRoutes.patch("/api/admin/feeds/:id", async (c) => {
-  const db = createDb(c.env.DB);
   const body = await c.req.json();
-  const feedId = c.req.param("id");
-
-  await invalidateCache(c.env, ["/api/public/feeds", "/api/public/articles", "/api/public/tags"]);
-
-  // D1 local (miniflare) caches reads and doesn't invalidate after writes within the same request.
-  // Re-querying may return stale data. Fetch BEFORE the update and merge the changes.
-  const current = await db.select().from(feeds).where(eq(feeds.id, feedId)).get();
-  if (!current) return c.json({ error: "Feed not found" }, 404);
-
-  // Build SET clause using raw D1 prepare() — drizzle .run() / .returning().all()
-  // silently fail to commit UPDATEs on local D1 (miniflare/workerd).
-  const setClauses: string[] = ["updated_at = ?"];
-  const setValues: any[] = [new Date().toISOString()];
-
-  const columnMap: Record<string, string> = {
-    title: "title",
-    siteUrl: "site_url",
-    description: "description",
-    folderId: "folder_id",
-    refreshInterval: "refresh_interval",
-    autoRefresh: "auto_refresh",
-  };
-
-  for (const [key, col] of Object.entries(columnMap)) {
-    if (body[key] !== undefined) {
-      setClauses.push(`${col} = ?`);
-      setValues.push(body[key]);
-    }
-  }
-
-  setValues.push(feedId);
-  await c.env.DB.prepare(`UPDATE feeds SET ${setClauses.join(", ")} WHERE id = ?`).bind(...setValues).run();
-
-  // Update tags if provided
-  if (body.tagIds && Array.isArray(body.tagIds)) {
-    await db.delete(feedTags).where(eq(feedTags.feedId, feedId)).run();
-    for (const tagId of body.tagIds) {
-      await db.insert(feedTags).values({ feedId, tagId }).run();
-    }
-  }
-
-  await invalidateCache(c.env, ["/api/public/feeds", "/api/public/articles", "/api/public/tags"]);
-
-  // Merge updated fields into the pre-update row (avoids stale D1 read cache)
-  const updated = { ...current, ...body, updatedAt: new Date() };
-  return c.json(updated);
+  const result = await updateFeed(c.env, c.req.param("id"), body);
+  if (!result) return c.json({ error: "Feed not found" }, 404);
+  return c.json(result);
 });
 
 adminRoutes.delete("/api/admin/feeds/:id", async (c) => {
-  const db = createDb(c.env.DB);
-  await db.delete(feeds).where(eq(feeds.id, c.req.param("id"))).run();
-  await invalidateCache(c.env, ["/api/public/feeds", "/api/public/articles", "/api/public/folders", "/api/public/tags"]);
+  await deleteFeed(c.env, c.req.param("id"));
   return c.json({ success: true });
 });
 
 // ─── Articles ──────────────────────────────────────────────────────────────
 adminRoutes.get("/api/admin/articles", async (c) => {
-  const db = createDb(c.env.DB);
   const feedId = c.req.query("feedId");
   const limit = parseInt(c.req.query("limit") || "50");
   const offset = parseInt(c.req.query("offset") || "0");
-
-  const conditions = [];
-  if (feedId) conditions.push(eq(articles.feedId, feedId));
-
-  const where = conditions.length > 0 ? and(...conditions) : undefined;
-  const result = await db.select().from(articles)
-    .where(where).orderBy(desc(articles.publishedAt)).limit(limit).offset(offset).all();
-  return c.json(result);
+  return c.json(await listArticles(c.env, { feedId, limit, offset }));
 });
 
 adminRoutes.get("/api/admin/articles/:id", async (c) => {
-  const db = createDb(c.env.DB);
-  const article = await db.select().from(articles).where(eq(articles.id, c.req.param("id"))).get();
+  const article = await getArticle(c.env, c.req.param("id"));
   if (!article) return c.json({ error: "Article not found" }, 404);
   return c.json(article);
 });
 
 adminRoutes.patch("/api/admin/articles/:id", async (c) => {
-  const db = createDb(c.env.DB);
   const body = await c.req.json();
-  const articleId = c.req.param("id");
-
-  // Use raw D1 for UPDATE (drizzle .run() silently fails on local D1)
-  const setClauses: string[] = [];
-  const setValues: any[] = [];
-
-  if (body.read !== undefined) { setClauses.push("`read` = ?"); setValues.push(body.read ? 1 : 0); }
-  if (body.bookmarked !== undefined) { setClauses.push("bookmarked = ?"); setValues.push(body.bookmarked ? 1 : 0); }
-  if (body.readLater !== undefined) { setClauses.push("read_later = ?"); setValues.push(body.readLater ? 1 : 0); }
-
-  if (setClauses.length > 0) {
-    setValues.push(articleId);
-    await c.env.DB.prepare(`UPDATE articles SET ${setClauses.join(", ")} WHERE id = ?`).bind(...setValues).run();
-  }
-
+  await updateArticle(c.env, c.req.param("id"), body);
   return c.json({ success: true });
 });
 
 adminRoutes.delete("/api/admin/articles/:id", async (c) => {
-  const db = createDb(c.env.DB);
-  await db.delete(articles).where(eq(articles.id, c.req.param("id"))).run();
-  await invalidateCache(c.env, ["/api/public/articles"]);
+  await deleteArticle(c.env, c.req.param("id"));
   return c.json({ success: true });
 });
 
 // ─── Folders ───────────────────────────────────────────────────────────────
-adminRoutes.get("/api/admin/folders", async (c) => {
-  const db = createDb(c.env.DB);
-  return c.json(await db.select().from(folders).orderBy(folders.order).all());
-});
+adminRoutes.get("/api/admin/folders", async (c) => c.json(await listFolders(c.env)));
 
 adminRoutes.post("/api/admin/folders", async (c) => {
-  const db = createDb(c.env.DB);
   const { name, order } = await c.req.json();
   if (!name) return c.json({ error: "Folder name is required" }, 400);
-  const id = crypto.randomUUID();
-  await db.insert(folders).values({ id, name, order: order ?? 0, createdAt: new Date() }).run();
-  await invalidateCache(c.env, ["/api/public/folders"]);
-  return c.json({ id, success: true }, 201);
+  return c.json(await createFolder(c.env, name, order), 201);
 });
 
 adminRoutes.patch("/api/admin/folders/:id", async (c) => {
-  const db = createDb(c.env.DB);
   const body = await c.req.json();
-  const folderId = c.req.param("id");
-
-  // Use raw D1 for UPDATE (drizzle .run() silently fails on local D1)
-  const setClauses: string[] = [];
-  const setValues: any[] = [];
-
-  if (body.name !== undefined) { setClauses.push("name = ?"); setValues.push(body.name); }
-  if (body.order !== undefined) { setClauses.push("`order` = ?"); setValues.push(body.order); }
-
-  if (setClauses.length > 0) {
-    setValues.push(folderId);
-    await c.env.DB.prepare(`UPDATE folders SET ${setClauses.join(", ")} WHERE id = ?`).bind(...setValues).run();
-  }
-
-  await invalidateCache(c.env, ["/api/public/folders", "/api/public/feeds"]);
+  await updateFolder(c.env, c.req.param("id"), body);
   return c.json({ success: true });
 });
 
 adminRoutes.delete("/api/admin/folders/:id", async (c) => {
-  const db = createDb(c.env.DB);
-  await db.delete(folders).where(eq(folders.id, c.req.param("id"))).run();
-  await invalidateCache(c.env, ["/api/public/folders", "/api/public/feeds"]);
+  await deleteFolder(c.env, c.req.param("id"));
   return c.json({ success: true });
 });
 
 // ─── Tags ──────────────────────────────────────────────────────────────────
-adminRoutes.get("/api/admin/tags", async (c) => {
-  const db = createDb(c.env.DB);
-  return c.json(await db.select().from(tags).all());
-});
+adminRoutes.get("/api/admin/tags", async (c) => c.json(await listTags(c.env)));
 
 adminRoutes.post("/api/admin/tags", async (c) => {
-  const db = createDb(c.env.DB);
   const { name } = await c.req.json();
   if (!name) return c.json({ error: "Tag name is required" }, 400);
-  const id = crypto.randomUUID();
   try {
-    await db.insert(tags).values({ id, name }).run();
-    await invalidateCache(c.env, ["/api/public/tags"]);
-    return c.json({ id, success: true }, 201);
+    return c.json(await createTag(c.env, name), 201);
   } catch (err: any) {
     if (err.message?.includes("UNIQUE")) return c.json({ error: "Tag already exists" }, 409);
     return c.json({ error: "Failed to create tag" }, 500);
@@ -249,25 +127,20 @@ adminRoutes.post("/api/admin/tags", async (c) => {
 adminRoutes.patch("/api/admin/tags/:id", async (c) => {
   const { name } = await c.req.json();
   if (!name) return c.json({ error: "Tag name is required" }, 400);
-  const tagId = c.req.param("id");
-  await c.env.DB.prepare("UPDATE tags SET name = ? WHERE id = ?").bind(name, tagId).run();
-  await invalidateCache(c.env, ["/api/public/tags"]);
+  await updateTag(c.env, c.req.param("id"), name);
   return c.json({ success: true });
 });
 
 adminRoutes.delete("/api/admin/tags/:id", async (c) => {
-  const db = createDb(c.env.DB);
-  await db.delete(tags).where(eq(tags.id, c.req.param("id"))).run();
-  await invalidateCache(c.env, ["/api/public/tags", "/api/public/feeds"]);
+  await deleteTag(c.env, c.req.param("id"));
   return c.json({ success: true });
 });
 
 // ─── Feed tags ────────────────────────────────────────────────────────────────
 adminRoutes.get("/api/admin/feeds/:id/tags", async (c) => {
   const db = createDb(c.env.DB);
-  const feedId = c.req.param("id");
   const result = await db.select({ tagId: feedTags.tagId }).from(feedTags)
-    .where(eq(feedTags.feedId, feedId)).all();
+    .where(eq(feedTags.feedId, c.req.param("id"))).all();
   return c.json(result);
 });
 
@@ -292,12 +165,11 @@ function escapeXml(str: string): string {
 }
 
 adminRoutes.get("/api/admin/opml", async (c) => {
-  const db = createDb(c.env.DB);
-  const allFeeds = await db.select().from(feeds).all();
-  const allFolders = await db.select().from(folders).all();
+  const allFeeds = await listFeeds(c.env);
+  const allFolders = await listFolders(c.env);
 
   const folderMap = new Map<string, typeof allFeeds>();
-  allFolders.forEach((f) => folderMap.set(f.id, []));
+  allFolders.forEach((f: any) => folderMap.set(f.id, []));
   const uncategorized: typeof allFeeds = [];
   for (const feed of allFeeds) {
     if (feed.folderId && folderMap.has(feed.folderId)) {
@@ -346,7 +218,6 @@ adminRoutes.post("/api/admin/opml", async (c) => {
   const text = await file.text();
   const imported = { feeds: 0, skipped: 0, folders: 0 };
 
-  // Simple OPML parser
   const outlineRegex = /<outline[^>]*>/gi;
   const xmlUrlRegex = /xmlUrl="([^"]+)"/i;
   const titleRegex = /(?:text|title)="([^"]*)"/i;
@@ -362,61 +233,30 @@ adminRoutes.post("/api/admin/opml", async (c) => {
     const siteUrl = line.match(htmlUrlRegex)?.[1] || null;
 
     try {
-      const id = crypto.randomUUID();
-      await db.insert(feeds).values({
-        id, title, url, siteUrl, folderId: null,
-        refreshInterval: 30, autoRefresh: true, lastFetched: null,
-        createdAt: new Date(), updatedAt: new Date(),
-      }).run();
+      await createFeed(c.env, { title, url, siteUrl });
       imported.feeds++;
     } catch (err: any) {
       if (err.message?.includes('UNIQUE')) imported.skipped++;
     }
   }
 
-  await invalidateCache(c.env, ["/api/public/feeds", "/api/public/articles"]);
   return c.json(imported);
 });
 
 // ─── Search ──────────────────────────────────────────────────────────────────
 adminRoutes.get("/api/admin/search", async (c) => {
-  const db = createDb(c.env.DB);
   const q = c.req.query("q") || "";
   const limit = parseInt(c.req.query("limit") || "20");
-  if (!q) return c.json([]);
-
-  const results = await db.select({
-    id: articles.id,
-    feedId: articles.feedId,
-    feedTitle: feeds.title,
-    title: articles.title,
-    url: articles.url,
-    author: articles.author,
-    summary: articles.summary,
-    publishedAt: articles.publishedAt,
-  }).from(articles).leftJoin(feeds, eq(articles.feedId, feeds.id))
-    .where(sql`${articles.title} LIKE ${`%${q}%`} OR ${articles.summary} LIKE ${`%${q}%`}`)
-    .orderBy(desc(articles.publishedAt)).limit(limit).all();
-
-  return c.json(results);
+  return c.json(await searchArticles(c.env, q, limit));
 });
 
 // ─── Stats ─────────────────────────────────────────────────────────────────
 adminRoutes.get("/api/admin/stats/unread-counts", async (c) => {
-  const db = createDb(c.env.DB);
-  const counts = await db.select({
-    feedId: articles.feedId,
-    unread: sql<number>`count(*)`,
-  }).from(articles).where(eq(articles.read, false)).groupBy(articles.feedId).all();
-
-  const map: Record<string, number> = {};
-  for (const row of counts as any[]) map[row.feedId] = row.unread;
-  return c.json(map);
+  return c.json(await getUnreadCounts(c.env));
 });
 
 // ─── Cron trigger ──────────────────────────────────────────────────────────
 adminRoutes.post("/api/admin/fetch-feeds", async (c) => {
-  // Process feeds inline with ETag caching — immediate feedback, no queue needed
   try {
     const result = await refreshFeedsInline(c.env);
     return c.json({
