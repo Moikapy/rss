@@ -125,7 +125,7 @@ export async function fetchAndParseFeed(
 
 // ─── JSON Feed ──────────────────────────────────────────────────────────────
 
-function parseJsonFeed(text: string): ParsedFeed {
+export function parseJsonFeed(text: string): ParsedFeed {
   const data = JSON.parse(text);
   return {
     title: stripHtmlTags(decodeHTMLEntities(data.title || "Untitled Feed")),
@@ -144,7 +144,7 @@ function parseJsonFeed(text: string): ParsedFeed {
 
 // ─── XML Feed (RSS/Atom) ───────────────────────────────────────────────────
 
-function parseXmlFeed(text: string): ParsedFeed {
+export function parseXmlFeed(text: string): ParsedFeed {
   const feed: ParsedFeed = {
     title: stripHtmlTags(decodeHTMLEntities(extractText(text, "title") || "")) || "Untitled Feed",
     siteUrl:
@@ -231,7 +231,7 @@ export async function extractContent(url: string): Promise<{ content: string | n
   }
 }
 
-function sanitizeHtml(html: string): string {
+export function sanitizeHtml(html: string): string {
   return decodeHTMLEntities(html
     .replace(/<script[\s\S]*?<\/script>/gi, "")
     .replace(/<style[\s\S]*?<\/style>/gi, "")
@@ -415,7 +415,7 @@ export async function refreshFeedsInline(
 
 // ─── XML Helpers ───────────────────────────────────────────────────────────
 
-function extractText(xml: string, tag: string): string | null {
+export function extractText(xml: string, tag: string): string | null {
   const escapedTag = tag.replace(":", "\\:");
   const regex = new RegExp(`<${escapedTag}[^>]*>([\\s\\S]*?)<\\/${escapedTag}>`, "i");
   const match = xml.match(regex);
@@ -432,7 +432,7 @@ function extractText(xml: string, tag: string): string | null {
 }
 
 /** Decode common HTML entities found in RSS/Atom feeds */
-function decodeHTMLEntities(str: string): string {
+export function decodeHTMLEntities(str: string): string {
   return str
     // Named entities (process &amp; FIRST to avoid double-decoding)
     .replace(/&amp;/g, "&")
@@ -447,11 +447,11 @@ function decodeHTMLEntities(str: string): string {
 }
 
 /** Strip HTML tags from a string — some RSS feeds put HTML in title/summary fields */
-function stripHtmlTags(str: string): string {
+export function stripHtmlTags(str: string): string {
   return str.replace(/<[^\u003e]*>/g, "").trim();
 }
 
-function extractAttr(xml: string, tag: string, attr: string): string | null {
+export function extractAttr(xml: string, tag: string, attr: string): string | null {
   const regex = new RegExp(`<${tag}[^>]*${attr}=["']([^"']*)["']`, "i");
   const match = xml.match(regex);
   return match ? match[1] : null;
@@ -461,7 +461,7 @@ function extractAttr(xml: string, tag: string, attr: string): string | null {
  * Extract the correct article URL from Atom <link rel="alternate">.
  * Falls back to first href link, then text content.
  */
-function extractAlternateLink(xml: string): string | null {
+export function extractAlternateLink(xml: string): string | null {
   // Atom: <link rel="alternate" href="..." />
   const altMatch = xml.match(/<link[^>]*rel=["']alternate["'][^>]*href=["']([^"']*)["']/i) ||
     xml.match(/<link[^>]*href=["']([^"']*)["'][^>]*rel=["']alternate["']/i);
@@ -472,7 +472,7 @@ function extractAlternateLink(xml: string): string | null {
   return firstHref;
 }
 
-function parseDate(dateStr: string): Date {
+export function parseDate(dateStr: string): Date {
   if (!dateStr) return new Date();
   const date = new Date(dateStr);
   return isNaN(date.getTime()) ? new Date() : date;

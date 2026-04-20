@@ -9,7 +9,9 @@
     "db:migrate:remote": "wrangler d1 migrations apply 0xrss-db --remote",
     "db:migrate:prod": "wrangler d1 migrations apply 0xrss-db --remote",
     "kv:create": "wrangler kv namespace create CACHE",
-    "queue:create": "wrangler queues create feed-fetch-queue"
+    "queue:create": "wrangler queues create feed-fetch-queue",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "dependencies": {
     "@mozilla/readability": "^0.6.0",
@@ -23,6 +25,7 @@
     "@cloudflare/workers-types": "^4",
     "drizzle-kit": "^0.31.10",
     "typescript": "^5",
+    "vitest": "^4.1.4",
     "wrangler": "^4"
   }
 }
